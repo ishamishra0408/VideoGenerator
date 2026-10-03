@@ -1,6 +1,6 @@
 # VideoGenerator
 
-Give it a GitHub repo, and optionally a script, and it makes a narrated explainer film of 1, 2, 3 or 4 minutes. The look and the voice follow GitDiagram's own explainer films: lavender paper, ink cards that land on the sentence that names them, and Gemini 3.8 Flash TTS speaking as Charon. Or pick any of the [21st.dev community themes](https://21st.dev/community/themes), light or dark.
+Give it a GitHub repo, and optionally a script, and it makes a narrated explainer film of 1, 2, 3 or 4 minutes.
 
 No npm install. It's plain TypeScript that Node 22 runs directly, plus ffmpeg and Chrome.
 
@@ -36,7 +36,7 @@ node src/cli.ts --from examples/storyboard.json --voice say
 - **Write storyboard**: reads the repo and writes the storyboard, then shows it for editing. Change any heading or sentence (one sentence per line), then **Make film**.
 - **Make film**: does everything in one go.
 
-Pick a theme under **Theme**: GitDiagram's own, or any 21st.dev community theme in its light or dark version, with its colours and font shown as swatches. Past films are listed underneath, with the MP4 and captions to download. Re-filming an edited storyboard only re-voices the sentences you changed; the rest come from the cache.
+Pick a theme under **Theme**: any 21st.dev community theme in its light or dark version, with its colours and font shown as swatches. Past films are listed underneath, with the MP4 and captions to download. Re-filming an edited storyboard only re-voices the sentences you changed; the rest come from the cache.
 
 ## Deploy on Render
 
@@ -69,7 +69,7 @@ Pick a theme under **Theme**: GitDiagram's own, or any 21st.dev community theme 
 | `--script <file>` | Your narration, kept word for word. Each paragraph or list item is spoken as its own sentence, and Markdown headings hint where chapters go. With a script, your words set the length, so a long script makes a film longer than 4 minutes. |
 | `--adapt` | Fit `--script` to `--minutes` instead of keeping every word |
 | `--brief <text>` | Direction for the writer, such as "for a hiring manager" |
-| `--theme <name\|link>` | A 21st.dev community theme by name (`vintage-paper`) or link. Default `gitdiagram`. `--themes` lists them. |
+| `--theme <name\|link>` | A 21st.dev community theme by name (`vintage-paper`) or link. |
 | `--mode light\|dark` | The theme's light or dark version (default light) |
 | `--voice gemini\|say` | Gemini 3.8 Flash TTS as Charon (default), or macOS `say` offline |
 | `--model <slug>` | The OpenRouter model that writes the storyboard (default `anthropic/claude-sonnet-5.5`) |
@@ -93,7 +93,7 @@ The stage has nine kinds of scene: a title card, a statement, cards, a flow with
 
 ## Themes
 
-A theme sets the film's colours, fonts, corner radius and shadows. `gitdiagram` is the built-in look. Any other name is a theme from [21st.dev's community themes](https://21st.dev/community/themes): its light and dark styles are fetched from 21st.dev when you pick it and cached in `.videogen-cache/themes/`. None of them are bundled here. Their shadcn tokens map onto the stage (background, card, foreground, primary, accent, border, destructive). Every text colour is checked against the surface it sits on: an accent that wouldn't read is moved toward the text colour until it reaches 3:1, and body text and labels on tinted cards get 4.5:1 or 3.5:1. The theme's fonts come from Google Fonts and are embedded in the stage page, fetched before anything is paid for, so filming never waits on the network. A font Google doesn't have, or can't be reached for, falls back to a system font, with a note saying which. The theme list is cached for a day, each theme for a week, and fonts until you clear the cache. GitDiagram's own fonts (Geist, Geist Mono, Instrument Serif) load the same way. Changing the theme of a finished film re-films it for free, because the voice is cached.
+A theme sets the film's colours, fonts, corner radius and shadows. Any  name is a theme from [21st.dev's community themes](https://21st.dev/community/themes): its light and dark styles are fetched from 21st.dev when you pick it and cached in `.videogen-cache/themes/`. None of them are bundled here. Their shadcn tokens map onto the stage (background, card, foreground, primary, accent, border, destructive). Every text colour is checked against the surface it sits on: an accent that wouldn't read is moved toward the text colour until it reaches 3:1, and body text and labels on tinted cards get 4.5:1 or 3.5:1. The theme's fonts come from Google Fonts and are embedded in the stage page, fetched before anything is paid for, so filming never waits on the network. A font Google doesn't have, or can't be reached for, falls back to a system font, with a note saying which. The theme list is cached for a day, each theme for a week, and fonts until you clear the cache. Changing the theme of a finished film re-films it for free, because the voice is cached.
 
 ## Cost
 
@@ -119,8 +119,6 @@ npm test
 ```
 
 ## Credits
-
-The visual language (palette, grid paper, ink cards with hard shadows, serif-italic accents, progress rail, sound cues), the voice (Gemini 3.8 Flash TTS, Charon, and its style direction) and the seek-and-screenshot way of filming all come from [GitDiagram](https://github.com/ahmedkhaleel2004/gitdiagram) by Ahmed Khaleel, MIT licence. The code here is its own.
 
 Themes are the community themes on [21st.dev](https://21st.dev/community/themes), each credited to its author there, and are fetched at run time rather than redistributed. Fonts are served by [Google Fonts](https://fonts.google.com).
 
