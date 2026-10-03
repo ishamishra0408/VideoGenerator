@@ -1,0 +1,244 @@
+{
+  "title": "VideoGenerator",
+  "repo": "ishamishra0408/VideoGenerator",
+  "url": "https://github.com/ishamishra0408/VideoGenerator",
+  "beats": [
+    {
+      "title": "What it is",
+      "scenes": [
+        {
+          "kind": "title",
+          "eyebrow": "Open source \u00b7 TypeScript",
+          "heading": "Any repo, a *narrated* film",
+          "lines": [
+            "Point it at a repository and you get a narrated explainer video back."
+          ],
+          "items": [
+            {
+              "title": "1 to 4 minutes"
+            },
+            {
+              "title": "Gemini Charon voice"
+            },
+            {
+              "title": "Zero dependencies"
+            }
+          ]
+        },
+        {
+          "kind": "statement",
+          "eyebrow": "The idea",
+          "heading": "Every idea lands *as it's spoken*",
+          "lines": [
+            "Each card appears on the exact sentence that mentions it, the way GitDiagram's explainers do."
+          ],
+          "items": []
+        }
+      ]
+    },
+    {
+      "title": "How it works",
+      "scenes": [
+        {
+          "kind": "flow",
+          "eyebrow": "The pipeline",
+          "heading": "From repo to *MP4*",
+          "lines": [
+            "It reads the repo first.",
+            "Claude writes the script and the storyboard.",
+            "Gemini speaks each sentence, and headless Chrome films the stage."
+          ],
+          "items": [
+            {
+              "tag": "Read",
+              "title": "Repo",
+              "text": "Tree, README, key files",
+              "on": 0
+            },
+            {
+              "tag": "Write",
+              "title": "Storyboard",
+              "text": "Beats, scenes, narration",
+              "on": 1
+            },
+            {
+              "tag": "Speak",
+              "title": "Voice",
+              "text": "One clip per sentence",
+              "on": 2
+            },
+            {
+              "tag": "Film",
+              "title": "Render",
+              "text": "Seek, screenshot, encode",
+              "on": 2
+            }
+          ]
+        },
+        {
+          "kind": "cards",
+          "eyebrow": "What you control",
+          "heading": "Three *knobs*",
+          "lines": [
+            "You choose the length, bring your own script if you have one, and pick the voice."
+          ],
+          "items": [
+            {
+              "tag": "--minutes",
+              "title": "1, 2, 3 or 4",
+              "text": "Sets the word budget"
+            },
+            {
+              "tag": "--script",
+              "title": "Your words",
+              "text": "Kept word for word"
+            },
+            {
+              "tag": "--voice",
+              "title": "Charon or say",
+              "text": "Cloud or offline"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Inside",
+      "scenes": [
+        {
+          "kind": "code",
+          "eyebrow": "The voice",
+          "heading": "Cached, *four at a time*",
+          "lines": [
+            "Clips are cached by what was said, so a re-run only pays for new sentences.",
+            "Four workers speak in parallel."
+          ],
+          "code": {
+            "file": "src/voice.ts",
+            "text": "/** Speaks every line. Returns each clip's file and length in seconds, in order. */\nexport async function speakAll(lines: string[], opts: VoiceOptions, log: (s: string) => void = () => {}): Promise<{ files: string[]; durations: number[]; fresh: number }> {\n  const dir = join(opts.cacheDir, \"voice\");\n  mkdirSync(dir, { recursive: true });\n  const files = lines.map((l) => join(dir, `${clipKey(l, opts.backend)}.wav`));\n  const todo = lines.map((_, i) => i).filter((i) => !existsSync(files[i]));\n  let done = 0;\n  const worker = async () => {\n    for (let i = todo.shift(); i !== undefined; i = todo.shift()) {\n      await makeClip(lines[i], files[i], opts);\n      done++;\n      if (done % 5 === 0) log(`voice: ${done} new clips`);"
+          },
+          "items": [
+            {
+              "title": "Cache key",
+              "text": "Hash of voice, style and text",
+              "on": 0
+            },
+            {
+              "title": "Worker pool",
+              "text": "Concurrency of four",
+              "on": 1
+            }
+          ]
+        },
+        {
+          "kind": "tree",
+          "eyebrow": "Where things live",
+          "heading": "A small *codebase*",
+          "lines": [
+            "The source splits by stage.",
+            "The stage folder holds the page that gets filmed."
+          ],
+          "items": [
+            {
+              "title": "src/github.ts",
+              "text": "Reads the repo",
+              "on": 0
+            },
+            {
+              "title": "src/plan.ts",
+              "text": "Writes the storyboard",
+              "on": 0
+            },
+            {
+              "title": "src/voice.ts",
+              "text": "Speaks the lines",
+              "on": 0
+            },
+            {
+              "title": "src/audio.ts",
+              "text": "Mixes the soundtrack",
+              "on": 0
+            },
+            {
+              "title": "stage/",
+              "text": "The page that gets filmed",
+              "on": 1
+            }
+          ]
+        },
+        {
+          "kind": "stats",
+          "eyebrow": "By the numbers",
+          "heading": "Calibrated on *Charon*",
+          "lines": [
+            "The voice runs at about a hundred and forty six words a minute, so two minutes is roughly two hundred and ninety two words."
+          ],
+          "items": [
+            {
+              "title": "146",
+              "text": "words a minute"
+            },
+            {
+              "title": "292",
+              "text": "words for 2 minutes"
+            },
+            {
+              "title": "9",
+              "text": "scene kinds"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Run it",
+      "scenes": [
+        {
+          "kind": "compare",
+          "heading": "Making a *demo video*",
+          "lines": [
+            "Before, a demo meant a day of slides and a voiceover.",
+            "Now it's one command and a coffee."
+          ],
+          "items": [
+            {
+              "tag": "Before",
+              "title": "A day of slides, *a shaky voiceover*"
+            },
+            {
+              "tag": "After",
+              "title": "One command, *a film in minutes*"
+            }
+          ]
+        },
+        {
+          "kind": "checklist",
+          "eyebrow": "Try it",
+          "heading": "Three *steps*",
+          "lines": [
+            "Add your OpenRouter key.",
+            "Run it on a repo.",
+            "Open the video and the captions."
+          ],
+          "items": [
+            {
+              "title": "Add your key",
+              "text": "OPENROUTER_API_KEY in .env",
+              "on": 0
+            },
+            {
+              "title": "Run it",
+              "text": "node src/cli.ts --repo owner/name --minutes 2",
+              "on": 1
+            },
+            {
+              "title": "Watch it",
+              "text": "out/name-2min.mp4 + .srt",
+              "on": 2
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

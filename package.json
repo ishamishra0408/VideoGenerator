@@ -1,0 +1,22 @@
+{
+  "name": "videogen",
+  "version": "0.1.0",
+  "description": "Turn any GitHub repo (and an optional script) into a 1 to 4 minute narrated explainer video.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "node src/cli.ts",
+    "serve": "node src/cli.ts --serve",
+    "test": "node --test test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "keywords": [
+    "video",
+    "explainer",
+    "github",
+    "tts",
+    "gitdiagram"
+  ]
+}

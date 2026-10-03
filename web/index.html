@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>videogen</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><i></i>videogen</div>
+  <span id="keynote" class="chip warn" hidden>No OpenRouter key</span>
+</header>
+
+<main class="wrap">
+  <form id="make" class="card panel" autocomplete="off">
+    <label class="field"><span>Repository</span>
+      <input id="repo" placeholder="owner/name, GitHub URL or folder" required spellcheck="false">
+    </label>
+    <div class="field"><span>Length</span>
+      <div class="seg" id="minutes"><button type="button" data-v="1">1 min</button><button type="button" data-v="2" class="on">2 min</button><button type="button" data-v="3">3 min</button><button type="button" data-v="4">4 min</button></div>
+    </div>
+    <div class="field">
+      <span>Script <em>optional</em></span>
+      <textarea id="script" rows="5" placeholder="Paste narration"></textarea>
+      <div class="row">
+        <label class="link">Load file<input type="file" id="scriptfile" accept=".md,.markdown,.txt,text/plain" hidden></label>
+        <div class="seg small" id="mode" hidden><button type="button" data-v="keep" class="on">Keep my words</button><button type="button" data-v="fit">Fit to length</button></div>
+      </div>
+    </div>
+    <label class="field"><span>Direction <em>optional</em></span>
+      <input id="brief" placeholder="e.g. for a hiring manager">
+    </label>
+    <div class="field"><span>Theme</span>
+      <div class="row">
+        <select id="theme"><option value="gitdiagram">GitDiagram</option></select>
+        <div class="seg small" id="tmode"><button type="button" data-v="light" class="on">Light</button><button type="button" data-v="dark">Dark</button></div>
+      </div>
+      <div class="swatches" id="swatches"></div>
+    </div>
+    <div class="field"><span>Voice</span>
+      <div class="seg" id="voice"><button type="button" data-v="gemini" class="on">Charon</button><button type="button" data-v="say" id="voice-say">Offline</button></div>
+    </div>
+    <div class="actions">
+      <button type="submit" class="btn primary" id="go-board">Write storyboard</button>
+      <button type="button" class="btn" id="go-film">Make film</button>
+    </div>
+  </form>
+
+  <section class="out">
+    <div id="cost" class="costline" hidden><b>Cost</b><span></span></div>
+    <div id="error" class="note err" hidden></div>
+
+    <div id="progress" class="card" hidden>
+      <ol class="steps">
+        <li data-stage="repo"><b></b><div><div class="sname">Read the repo</div><div class="smsg"></div></div></li>
+        <li data-stage="storyboard"><b></b><div><div class="sname">Storyboard</div><div class="smsg"></div></div></li>
+        <li data-stage="voice"><b></b><div><div class="sname">Voice</div><div class="smsg"></div></div></li>
+        <li data-stage="sound"><b></b><div><div class="sname">Sound</div><div class="smsg"></div></div></li>
+        <li data-stage="render"><b></b><div><div class="sname">Film</div><div class="smsg"></div><div class="bar"><i></i></div></div></li>
+      </ol>
+    </div>
+
+    <div id="board" hidden>
+      <div class="head">
+        <div><h2 id="b-title"></h2><div class="meta" id="b-meta"></div></div>
+        <div class="actions"><a class="btn ghost" id="b-json" target="_blank">storyboard.json</a><button type="button" class="btn primary" id="b-film">Make film</button></div>
+      </div>
+      <div id="b-notes"></div>
+      <div id="beats"></div>
+    </div>
+
+    <div id="film" hidden>
+      <div class="card player"><video id="player" controls preload="metadata" playsinline></video></div>
+      <div class="head">
+        <div><h2 id="f-title"></h2><div class="meta" id="f-meta"></div></div>
+        <div class="actions"><a class="btn" id="f-mp4">MP4</a><a class="btn" id="f-srt">Captions</a><button type="button" class="btn ghost" id="f-edit">Edit storyboard</button></div>
+      </div>
+      <div id="f-notes"></div>
+    </div>
+
+    <div id="library">
+      <h3>Films</h3>
+      <div class="lib" id="lib"></div>
+      <p class="empty" id="lib-empty" hidden>No films yet</p>
+    </div>
+  </section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
