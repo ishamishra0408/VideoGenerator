@@ -45,7 +45,7 @@ Pick a theme under **Theme**: any 21st.dev community theme in its light or dark 
 `render.yaml` describes one Docker web service (Node 22, Chromium, ffmpeg). Render asks for two secrets when you create it:
 
 - `OPENROUTER_API_KEY`: pays for the storyboard and the voice.
-- `VIDEOGEN_PASSWORD`: 8 or more characters. The page asks for it before anything else, because every film spends the key's credit. The server won't start without it when it listens beyond the machine it runs on.
+- `VIDEOGEN_PASSWORD`: 8 or more characters. The site opens on a sign-in page that asks for it, because every film spends the key's credit, and remembers the browser for 30 days (changing the password signs everyone out). Scripts can send it as Basic auth. The server won't start without it when it listens beyond the machine it runs on.
 
 `GITHUB_TOKEN` is optional, as above. The blueprint uses the free plan, which is small (512 MB, a tenth of a CPU) and sleeps when idle, so films render at 720p in one Chrome tab with a faster encoder, and the page pings the server while a film renders so it stays awake. Nothing is kept across restarts or deploys: download each film when it's done. On a bigger plan, raise `VIDEOGEN_SCALE` to `1` (1080p), `VIDEOGEN_WORKERS` and `VIDEOGEN_PRESET`.
 

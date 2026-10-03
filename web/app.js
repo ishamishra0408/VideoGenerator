@@ -2,6 +2,11 @@
 (function () {
   "use strict";
   var $ = function (s) { return document.querySelector(s); };
+  // a session that has run out sends the page back to sign in
+  var realFetch = window.fetch.bind(window);
+  window.fetch = function (url, opts) {
+    return realFetch(url, opts).then(function (r) { if (r.status === 401) location.href = "/login"; return r; });
+  };
   var WPM = 146, ORDER = ["repo", "storyboard", "voice", "sound", "render"];
   var S = { minutes: 2, voice: "gemini", mode: "keep", theme: "gitdiagram", tmode: "light", plan: null, dir: null, busy: false, key: true };
   var GITDIAGRAM = { vars: { "--paper": "#f2e8ff", "--card": "#fdfaff", "--ink": "#17111f", "--purple": "#bd85fb", "--purple-soft": "#dcc2ff", "--purple-deep": "#7a2be0" }, fonts: { sans: "Geist" } };
@@ -272,6 +277,7 @@
   fetch("/api/status").then(function (r) { return r.json(); }).then(function (s) {
     S.key = s.key;
     $("#keynote").hidden = s.key;
+    $("#signout").hidden = !s.auth;
     if (!s.offline) { $("#voice-say").disabled = true; if (S.voice === "say") { S.voice = "gemini"; pick("voice", "gemini"); } }
     busy(false);
   }, function () {});

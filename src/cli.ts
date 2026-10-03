@@ -26,7 +26,7 @@ const HELP = `videogen: turn a repo into a 1 to 4 minute narrated explainer film
   --out <dir>           output folder (default out/<name>-<n>min)
   --fps <n>             frames a second (default 25)
   --workers <n>         Chrome tabs filming in parallel, 1 to 8 (default up to 4)
-  --env <file>          read keys from this .env file (default ./.env)
+  --env <file>          read keys from this .env file (default ./.env); repeat for more, first wins
 `;
 
 const { values: a } = parseArgs({
@@ -34,7 +34,7 @@ const { values: a } = parseArgs({
     repo: { type: "string" }, minutes: { type: "string" }, script: { type: "string" }, adapt: { type: "boolean" },
     brief: { type: "string" }, voice: { type: "string" }, model: { type: "string" }, "storyboard-only": { type: "boolean" },
     from: { type: "string" }, stills: { type: "string" }, out: { type: "string" }, fps: { type: "string" },
-    workers: { type: "string" }, env: { type: "string" }, serve: { type: "boolean" }, help: { type: "boolean", short: "h" },
+    workers: { type: "string" }, env: { type: "string", multiple: true }, serve: { type: "boolean" }, help: { type: "boolean", short: "h" },
     theme: { type: "string" }, mode: { type: "string" }, themes: { type: "boolean" },
   },
 });
@@ -45,7 +45,7 @@ function fail(msg: string): never {
 }
 
 if (a.help) { console.log(HELP); process.exit(0); }
-loadEnv(a.env ?? ".env");
+for (const f of a.env ?? [".env"]) loadEnv(f);  // the first file to set a key wins
 if (a.serve) {
   await import("./server.ts");
 } else if (a.themes) {

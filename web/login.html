@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>videogen</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  .gate{min-height:100vh;display:grid;place-items:center;padding:16px}
+  .gate form{width:min(380px,100%);padding:26px;display:grid;gap:18px}
+  .gate .brand{margin-bottom:4px}
+  .gate .note{display:none}
+  .gate .note.on{display:block}
+</style>
+</head>
+<body>
+<main class="gate">
+  <form class="card" method="post" action="/login">
+    <div class="brand"><i></i>videogen</div>
+    <label class="field"><span>Password</span>
+      <input type="password" name="password" autocomplete="current-password" required autofocus>
+    </label>
+    <div class="note err" id="wrong">That password didn't match.</div>
+    <div class="note err" id="wait">Too many tries. Wait ten minutes.</div>
+    <button type="submit" class="btn primary">Sign in</button>
+  </form>
+</main>
+<script>
+  var e = new URLSearchParams(location.search).get("e");
+  if (e === "wrong" || e === "wait") document.getElementById(e).classList.add("on");
+</script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 // The web page's server: local only, one film at a time, progress streamed to the page as it happens.
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
@@ -23,21 +23,66 @@ if (!LOCAL && PASSWORD.length < 8) {
 }
 const HOSTS = new Set(["127.0.0.1", "localhost", process.env.RENDER_EXTERNAL_HOSTNAME, ...(process.env.ALLOWED_HOSTS ?? "").split(",")].map((h) => h?.trim()).filter(Boolean));
 
+// ---------- the password ----------
+// The page asks once, on its own sign-in page, then remembers the browser with a signed cookie for 30 days.
+// The cookie is an HMAC keyed by the password, so changing the password signs everyone out. Scripts can still
+// send the password as Basic auth.
+
 const digest = (s: string) => createHash("sha256").update(s).digest();
+const same = (a: string, b: string) => timingSafeEqual(digest(a), digest(b));
+const SESSION_DAYS = 30;
+const sessionKey = createHash("sha256").update("videogen-session\0" + PASSWORD).digest();
+const sign = (issued: number) => `${issued}.${createHmac("sha256", sessionKey).update(String(issued)).digest("base64url")}`;
+function validSession(token: string | undefined): boolean {
+  const [issued, mac] = (token ?? "").split(".");
+  const t = Number(issued);
+  return !!mac && Number.isFinite(t) && Date.now() - t < SESSION_DAYS * 86_400_000 && t <= Date.now() + 60_000 && same(token!, sign(t));
+}
+const cookie = (req: IncomingMessage, name: string) => (req.headers.cookie ?? "").split(/;\s*/).find((c) => c.startsWith(name + "="))?.slice(name.length + 1);
+const secure = (req: IncomingMessage) => req.headers["x-forwarded-proto"] === "https";
+
+// behind Render's proxy the real client is the last address it appends, not anything the client sent
+const clientIp = (req: IncomingMessage) => String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",").pop()!.trim();
 const failures = new Map<string, { n: number; since: number }>();
-/** Basic auth, any user name, compared in constant time; ten wrong tries from one address lock it out for ten minutes. */
-function authorised(req: IncomingMessage, res: ServerResponse): boolean {
-  if (!PASSWORD) return true;
-  // behind Render's proxy the real client is the last address it appends, not anything the client sent
-  const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",").pop()!.trim();
+/** Ten wrong passwords from one address lock it out for ten minutes. */
+function lockedOut(ip: string): boolean {
   const f = failures.get(ip);
-  if (f && f.n >= 10 && Date.now() - f.since < 600_000) { res.writeHead(429).end("Too many tries. Wait ten minutes."); return false; }
+  return !!f && f.n >= 10 && Date.now() - f.since < 600_000;
+}
+function failed(ip: string) {
+  const f = failures.get(ip), fresh = !f || Date.now() - f.since >= 600_000;
+  failures.set(ip, { n: fresh ? 1 : f!.n + 1, since: fresh ? Date.now() : f!.since });
+}
+
+function authorised(req: IncomingMessage, res: ServerResponse, path: string): boolean {
+  if (!PASSWORD || validSession(cookie(req, "vg_session"))) return true;
   const m = /^Basic (.+)$/.exec(req.headers.authorization ?? "");
-  const pass = m ? Buffer.from(m[1], "base64").toString("utf8").split(":").slice(1).join(":") : null;
-  if (pass !== null && timingSafeEqual(digest(pass), digest(PASSWORD))) { failures.delete(ip); return true; }
-  if (pass !== null) failures.set(ip, { n: (f && Date.now() - f.since < 600_000 ? f.n : 0) + 1, since: f && Date.now() - f.since < 600_000 ? f.since : Date.now() });
-  res.writeHead(401, { "www-authenticate": 'Basic realm="videogen", charset="UTF-8"' }).end("Password needed.");
+  if (m) {
+    const ip = clientIp(req);
+    if (lockedOut(ip)) { res.writeHead(429).end("Too many tries. Wait ten minutes."); return false; }
+    const pass = Buffer.from(m[1], "base64").toString("utf8").split(":").slice(1).join(":");
+    if (same(pass, PASSWORD)) { failures.delete(ip); return true; }
+    failed(ip);
+  }
+  // pages go to the sign-in page; everything else gets a plain 401 (no browser prompt)
+  if (req.method === "GET" && !path.startsWith("/api/") && !path.startsWith("/files/")) res.writeHead(303, { location: "/login" }).end();
+  else res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: "Signed out.", login: "/login" }));
   return false;
+}
+
+/** The sign-in page's form posts here: the right password sets the session cookie. */
+async function login(req: IncomingMessage, res: ServerResponse) {
+  const ip = clientIp(req);
+  if (lockedOut(ip)) { res.writeHead(303, { location: "/login?e=wait" }).end(); return; }
+  let body = "";
+  for await (const c of req) { body += c; if (body.length > 4096) break; }
+  const pass = new URLSearchParams(body).get("password") ?? "";
+  if (!PASSWORD || !same(pass, PASSWORD)) { failed(ip); res.writeHead(303, { location: "/login?e=wrong" }).end(); return; }
+  failures.delete(ip);
+  res.writeHead(303, {
+    location: "/",
+    "set-cookie": `vg_session=${sign(Date.now())}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_DAYS * 86_400}${secure(req) ? "; Secure" : ""}`,
+  }).end();
 }
 
 type Event = ({ type: "progress" } & Progress) | { type: "done"; result: unknown } | { type: "error"; message: string };
@@ -172,7 +217,11 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   const path = url.pathname;
   if (path === "/healthz") { res.writeHead(200).end("ok"); return; }
-  if (!authorised(req, res)) return;
+  if (path === "/login" && req.method === "GET") return sendFile(req, res, join(WEB, "login.html"));
+  if (path === "/login" && req.method === "POST") return login(req, res);
+  if (path === "/logout") { res.writeHead(303, { location: PASSWORD ? "/login" : "/", "set-cookie": "vg_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" }).end(); return; }
+  if (path === "/app.css" && req.method === "GET") return sendFile(req, res, join(WEB, "app.css"));  // the sign-in page uses it too
+  if (!authorised(req, res, path)) return;
   try {
     if (req.method === "GET" && (path === "/" || path === "/app.js" || path === "/app.css")) {
       return sendFile(req, res, join(WEB, path === "/" ? "index.html" : path.slice(1)));
@@ -182,7 +231,7 @@ const server = createServer(async (req, res) => {
       return f ? sendFile(req, res, f) : void res.writeHead(404).end();
     }
     if (req.method === "GET" && path === "/api/status") {
-      return json(res, 200, { key: !!process.env.OPENROUTER_API_KEY?.trim(), offline: process.platform === "darwin", model: DEFAULT_MODEL, busy: [...runs.values()].some((r) => r.status === "running" || r.status === "queued") });
+      return json(res, 200, { auth: !!PASSWORD, key: !!process.env.OPENROUTER_API_KEY?.trim(), offline: process.platform === "darwin", model: DEFAULT_MODEL, busy: [...runs.values()].some((r) => r.status === "running" || r.status === "queued") });
     }
     if (req.method === "GET" && path === "/api/library") return json(res, 200, library());
     if (req.method === "GET" && path === "/api/themes") return json(res, 200, await listThemes(resolve(CACHE_DIR)));

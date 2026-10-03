@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 
-/** Loads KEY=value lines from an .env file into process.env, without overriding what is already set.
+/** Loads KEY=value lines from an .env file into process.env, without overriding what is already set (empty counts as unset).
  *  Values are never logged. */
 export function loadEnv(file = ".env"): void {
   if (!existsSync(file)) return;
@@ -12,7 +12,7 @@ export function loadEnv(file = ".env"): void {
     const key = line.slice(0, eq).trim();
     let value = line.slice(eq + 1).trim();
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-    if (process.env[key] === undefined) process.env[key] = value;
+    if (value && !process.env[key]) process.env[key] = value;  // an empty line doesn't block a later file
   }
 }
 
