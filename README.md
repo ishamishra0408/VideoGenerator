@@ -38,6 +38,27 @@ node src/cli.ts --from examples/storyboard.json --voice say
 
 Pick a theme under **Theme**: any 21st.dev community theme in its light or dark version, with its colours and font shown as swatches. Past films are listed underneath, with the MP4 and captions to download. Re-filming an edited storyboard only re-voices the sentences you changed; the rest come from the cache.
 
+## Post to YouTube
+
+Under a finished film, **YouTube** opens a panel. Connect your Google account once, check the title and description (filled in from the storyboard, with chapters YouTube recognises), pick Private, Unlisted or Public, and post. The upload goes up in pieces and carries on if the connection drops. Once posted, the panel collapses to the links (the video and YouTube Studio), and the film shows its YouTube link under the video from then on (kept in the film's folder as `youtube.json`).
+
+One-time Google setup:
+
+1. In the [Google Cloud console](https://console.cloud.google.com), create a project and enable the **YouTube Data API v3**.
+2. Under **Google Auth Platform** (the OAuth consent screen), choose **External**, add your Google account as a **test user**, and leave the app in **Testing**.
+3. Under **Clients**, create a **Web application** client with these authorised redirect URIs: `http://localhost:4319/youtube/callback`, and for Render `https://<your-service>.onrender.com/youtube/callback`.
+4. Put its client ID and secret in `.env` (and in Render's Environment) as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+
+What Google decides:
+
+- Videos uploaded through a Google project that hasn't passed YouTube's API audit are locked to private, whatever visibility you pick, until the project passes the audit. Apply for it in the Google Cloud console to post unlisted or public.
+- While the app is in Testing, Google ends the sign-in after 7 days; connect again.
+- The default daily quota allows only a few uploads a day.
+
+Each browser connects its own Google account and posts to its own channel; nobody can post with someone else's connection. The site asks only to upload videos and to see the email address. The tokens stay on the server in `.videogen-cache/youtube/` (one file per browser, not in git), and **Disconnect** revokes them. To let only certain accounts connect, set `GOOGLE_ALLOWED_EMAIL`. On Render's free plan the tokens are lost whenever the service restarts or sleeps, so you connect again.
+
+While the Google app is in **Testing**, only the accounts listed as test users (up to 100) can connect. To let any Google account connect, publish the app under **Google Auth Platform → Audience**. Until Google verifies it, people see an "unverified app" warning first, and apps asking for YouTube upload permission are capped at 100 users.
+
 ## Deploy on Render
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ishamishra0408/VideoGenerator)
@@ -59,6 +80,9 @@ Pick a theme under **Theme**: any 21st.dev community theme in its light or dark 
 | `VIDEOGEN_PRESET` | `medium` | x264 preset, e.g. `veryfast` |
 | `VIDEOGEN_FPS` | `25` | Frames a second |
 | `CHROME_PATH`, `FFMPEG_PATH` | found on the system | |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | none | Turn on posting to YouTube |
+| `GOOGLE_ALLOWED_EMAIL` | any account | The only Google account that may be connected |
+| `PUBLIC_URL` | Render's own URL, else `http://localhost:4319` | The address Google sends you back to after signing in |
 
 ## Options
 

@@ -116,6 +116,7 @@
     $(".bar i").style.width = "0";
   }
   function step(e) {
+    if (e.stage === "queued") { var first = document.querySelector(".steps li:not([hidden]) .smsg"); if (first) first.textContent = e.message; return; }
     var at = e.stage === "done" ? ORDER.length : ORDER.indexOf(e.stage);
     document.querySelectorAll(".steps li").forEach(function (li) {
       var i = ORDER.indexOf(li.dataset.stage);
@@ -232,6 +233,9 @@
   // ---------- the film ----------
   function openFilm(r) {
     cost(r.cost);
+    $("#yt").hidden = true;
+    S.youtube = r.youtube || null;
+    ytLink(S.youtube);
     var v = $("#player");
     v.textContent = "";
     v.src = r.video;
@@ -254,6 +258,96 @@
     fetch(S.storyboard).then(function (r) { return r.json(); }).then(function (p) { openBoard(p, S.dir, [], S.storyboard); }, function () { error("That film has no storyboard."); });
   });
 
+  // ---------- YouTube ----------
+  var Y = { privacy: "private", status: null, posting: null };
+  /** Under the film, always: where it is on YouTube. */
+  function ytLink(v) {
+    var line = $("#f-ytlink");
+    line.textContent = "";
+    line.hidden = !v;
+    if (!v) return;
+    var a = el("a", null, v.url.replace(/^https:\/\//, "")); a.href = v.url; a.target = "_blank"; a.rel = "noopener";
+    line.appendChild(document.createTextNode("On YouTube · ")); line.appendChild(a);
+  }
+  /** A posted film's panel collapses to one line: what happened, and where to see it. */
+  function postedLine(v) {
+    var box = $("#yt-posted");
+    box.textContent = "";
+    box.appendChild(document.createTextNode(v.privacy !== v.requested ? "Posted, but YouTube kept it private until this Google project passes its audit. " : "Posted. "));
+    var watch = el("a", null, "Watch"); watch.href = v.url; watch.target = "_blank"; watch.rel = "noopener";
+    var studio = el("a", null, "YouTube Studio"); studio.href = v.studio; studio.target = "_blank"; studio.rel = "noopener";
+    box.appendChild(watch); box.appendChild(document.createTextNode(" · ")); box.appendChild(studio);
+    box.hidden = false;
+    $("#yt-form").hidden = true;
+    $("#yt").querySelector(".yt-connect").hidden = true;
+    $("#yt").querySelector(".yt-off").hidden = true;
+  }
+  seg("yt-privacy", "ytPrivacy", function () { Y.privacy = S.ytPrivacy; });
+  function ytShow(open) {
+    var box = $("#yt");
+    box.hidden = !open;
+    if (!open) return;
+    $("#yt-posted").hidden = true;
+    if (S.youtube) return postedLine(S.youtube);
+    // every film starts Private; a post in flight keeps its bar on its own film only
+    Y.privacy = "private"; pick("yt-privacy", "private");
+    var mine = Y.posting === S.dir;
+    $("#yt-done").hidden = true; $("#yt-bar").hidden = !mine; $("#yt-status").hidden = !Y.posting;
+    $("#yt-status").textContent = Y.posting && !mine ? "Another film is posting." : $("#yt-status").textContent;
+    $("#yt-post").disabled = !!Y.posting;
+    fetch("/api/youtube").then(function (r) { return r.json(); }).then(function (st) {
+      Y.status = st;
+      box.querySelector(".yt-off").hidden = st.configured;
+      box.querySelector(".yt-connect").hidden = !st.configured || st.connected;
+      $("#yt-form").hidden = !st.connected;
+      if (!st.connected) return;
+      $("#yt-who").textContent = st.email ? "Posting as " + st.email : "Connected";
+      fetch("/api/youtube/draft?dir=" + encodeURIComponent(S.dir)).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        if (!d) return;
+        $("#yt-title").value = d.title;
+        $("#yt-desc").value = d.description;
+      });
+    });
+  }
+  $("#f-yt").addEventListener("click", function () { ytShow($("#yt").hidden); });
+  // Google sends the browser back to the front page: remember which film to come back to
+  $("#yt-connect").addEventListener("click", function () { try { localStorage.setItem("videogen-yt-film", S.dir || ""); } catch (e) {} });
+  $("#yt-disconnect").addEventListener("click", function () {
+    fetch("/api/youtube/disconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).then(function () { ytShow(true); });
+  });
+  $("#yt-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var post = $("#yt-post"), bar = $("#yt-bar"), done = $("#yt-done"), status = $("#yt-status"), film = S.dir;
+    var here = function () { return S.dir === film && !$("#yt").hidden; };
+    Y.posting = film;
+    post.disabled = true; bar.hidden = false; bar.querySelector("i").style.width = "0"; done.hidden = true;
+    status.textContent = "Starting the upload"; status.hidden = false;
+    fetch("/api/youtube/upload", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dir: S.dir, title: $("#yt-title").value, description: $("#yt-desc").value, privacy: Y.privacy }) })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || "YouTube refused."); return j.id; }); })
+      .then(function (id) {
+        return new Promise(function (resolve, reject) {
+          var es = new EventSource("/api/runs/" + id + "/events");
+          es.onmessage = function (m) {
+            var ev = JSON.parse(m.data);
+            if (ev.type === "progress") {
+              if (here()) { status.textContent = ev.message; if (typeof ev.fraction === "number") bar.querySelector("i").style.width = ev.fraction * 100 + "%"; }
+              return;
+            }
+            es.close();
+            ev.type === "done" ? resolve(ev.result) : reject(new Error(ev.message));
+          };
+          es.onerror = function () { es.close(); reject(new Error("Lost touch with the server. The upload may still finish: check YouTube Studio in a few minutes before posting again.")); };
+        });
+      })
+      .then(function (v) {
+        if (S.dir === film) { S.youtube = v; ytLink(v); }
+        if (here()) postedLine(v);
+        library();
+      }, function (err) { if (!here()) return; done.textContent = err.message; done.classList.add("err"); done.hidden = false; })
+      .then(function () { Y.posting = null; post.disabled = false; bar.hidden = true; status.hidden = true; });
+  });
+
   // ---------- past films ----------
   function library() {
     fetch("/api/library").then(function (r) { return r.json(); }).then(function (list) {
@@ -274,6 +368,7 @@
     }, function () {});
   }
 
+  fetch("/api/youtube").then(function (r) { return r.json(); }).then(function (st) { $("#f-yt").hidden = !st.configured; }, function () { $("#f-yt").hidden = true; });
   fetch("/api/status").then(function (r) { return r.json(); }).then(function (s) {
     S.key = s.key;
     $("#keynote").hidden = s.key;
@@ -282,4 +377,22 @@
     busy(false);
   }, function () {});
   library();
+
+  // back from Google: reopen the film that was being posted, with the YouTube panel open
+  (function () {
+    var q = new URLSearchParams(location.search), y = q.get("youtube");
+    if (!y) return;
+    history.replaceState(null, "", "/");
+    var WHY = { denied: "The YouTube sign-in was cancelled.", expired: "That YouTube sign-in link expired. Connect again.",
+      scope: "YouTube upload permission wasn't granted. Connect again and allow it.", account: "That Google account isn't the one this site posts as.",
+      failed: "The YouTube sign-in didn't finish. Try again." };
+    if (y === "off") error("YouTube isn't set up on this server.");
+    if (y === "error") error(WHY[q.get("code")] || WHY.failed);
+    var film = ""; try { film = localStorage.getItem("videogen-yt-film") || ""; localStorage.removeItem("videogen-yt-film"); } catch (e) {}
+    if (!film) return;
+    fetch("/api/library").then(function (r) { return r.json(); }).then(function (list) {
+      var f = list.filter(function (x) { return x.dir === film; })[0];
+      if (f) { openFilm(f); ytShow(true); }
+    });
+  })();
 })();

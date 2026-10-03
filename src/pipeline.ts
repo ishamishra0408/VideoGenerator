@@ -16,7 +16,7 @@ import { layout, toSrt } from "./timing.ts";
 import { speakAll, voiceCost, type Backend, type FreshClip } from "./voice.ts";
 import { loadTheme, themeCss, type Mode } from "./theme.ts";
 
-export type Stage = "repo" | "storyboard" | "voice" | "sound" | "render" | "done" | "cost";
+export type Stage = "repo" | "storyboard" | "voice" | "sound" | "render" | "done" | "cost" | "upload" | "queued";
 export interface Progress { stage: Stage; message: string; fraction?: number }
 
 export interface Job {

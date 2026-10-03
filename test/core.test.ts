@@ -282,3 +282,169 @@ test("theme: text on accents and primaries reads well whichever way the accent l
     assert.ok(contrast(P("--bar-ink"), P("--paper-2")) >= 3.5 && contrast(P("--ink-2"), P("--card")) >= 3.5);
   }
 });
+
+test("youtube: PKCE, the sign-in link, and swapping the code for tokens", async () => {
+  const { pkceChallenge, youtubeConfig, authUrl, finishSignIn, youtubeStatus } = await import("../src/youtube.ts");
+  // RFC 7636, appendix B
+  assert.equal(pkceChallenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+  const env = { id: process.env.GOOGLE_CLIENT_ID, secret: process.env.GOOGLE_CLIENT_SECRET };
+  delete process.env.GOOGLE_CLIENT_ID;
+  assert.equal(youtubeConfig("http://localhost:4319", tmpdir()), null);
+  process.env.GOOGLE_CLIENT_ID = "cid"; process.env.GOOGLE_CLIENT_SECRET = "secret";
+  const cfg = youtubeConfig("http://localhost:4319/", mkdtempSync(join(tmpdir(), "vg-yt-")))!;
+  assert.equal(cfg.redirectUri, "http://localhost:4319/youtube/callback");
+  const u = new URL(authUrl(cfg).url);
+  assert.equal(u.searchParams.get("scope"), "openid email https://www.googleapis.com/auth/youtube.upload");
+  assert.equal(u.searchParams.get("code_challenge_method"), "S256");
+  assert.equal(u.searchParams.get("access_type"), "offline");
+  const state = u.searchParams.get("state")!;
+  const real = globalThis.fetch;
+  let sent: URLSearchParams | undefined;
+  const idToken = "x." + Buffer.from(JSON.stringify({ email: "me@example.com" })).toString("base64url") + ".y";
+  globalThis.fetch = (async (_url: string, init: any) => { sent = new URLSearchParams(init.body); return new Response(JSON.stringify({ access_token: "a", refresh_token: "r", expires_in: 3600, scope: "openid email https://www.googleapis.com/auth/youtube.upload", id_token: idToken })); }) as typeof fetch;
+  try {
+    await assert.rejects(finishSignIn(cfg, "code", "not-the-state"), /expired/);
+    assert.equal(await finishSignIn(cfg, "code", state), "me@example.com");
+    assert.equal(sent!.get("grant_type"), "authorization_code");
+    assert.equal(pkceChallenge(sent!.get("code_verifier")!), u.searchParams.get("code_challenge"));
+    await assert.rejects(finishSignIn(cfg, "code", state), /expired/);  // a state works once
+    assert.deepEqual(youtubeStatus(cfg), { configured: true, connected: true, email: "me@example.com" });
+  } finally {
+    globalThis.fetch = real;
+    if (env.id === undefined) delete process.env.GOOGLE_CLIENT_ID; else process.env.GOOGLE_CLIENT_ID = env.id;
+    if (env.secret === undefined) delete process.env.GOOGLE_CLIENT_SECRET; else process.env.GOOGLE_CLIENT_SECRET = env.secret;
+  }
+});
+
+test("youtube: the draft has a clean title and chapters YouTube accepts", async () => {
+  const { draft, chapters, cleanTitle } = await import("../src/youtube.ts");
+  const p: Plan = { title: "widget", repo: "acme/widget", url: "https://github.com/acme/widget", tag: "", beats: [
+    { title: "The hook", scenes: [scene(["A tiny widget server.", "It does one thing."])] },
+    { title: "How <it> works", scenes: [scene(["Third."])] },
+    { title: "Run it", scenes: [scene(["Fourth."])] },
+  ] };
+  const t = layout(p, [12, 12, 12, 12]);
+  assert.deepEqual(chapters(p, t), ["0:00 The hook", `0:${String(Math.floor(t.scenes[1].start)).padStart(2, "0")} How it works`, `0:${Math.floor(t.scenes[2].start)} Run it`]);
+  const d = draft(p, t);
+  assert.equal(d.title, "widget, explained in 1 minute");
+  assert.ok(d.description.startsWith("A tiny widget server. It does one thing.\n\nhttps://github.com/acme/widget\n\nChapters\n0:00 The hook"));
+  assert.ok(!d.description.includes("<"));
+  assert.deepEqual(chapters(p, layout(p, [2, 2, 2, 2])), []);  // chapters under 10 s are left out
+  assert.equal(cleanTitle("x".repeat(150)).length, 100);
+});
+
+test("youtube: a resumable upload carries on from where YouTube says it got to", async () => {
+  const { youtubeConfig, uploadVideo } = await import("../src/youtube.ts");
+  const { writeFileSync } = await import("node:fs");
+  process.env.GOOGLE_CLIENT_ID = "cid"; process.env.GOOGLE_CLIENT_SECRET = "secret";
+  const dir = mkdtempSync(join(tmpdir(), "vg-up-"));
+  const cfg = youtubeConfig("http://localhost:4319", dir)!;
+  (await import("node:fs")).mkdirSync(cfg.tokenDir, { recursive: true });
+  writeFileSync(cfg.tokenFile, JSON.stringify({ access_token: "old", refresh_token: "r", expires_at: 0 }));  // expired: must refresh first
+  const film = join(dir, "film.mp4");
+  writeFileSync(film, Buffer.alloc(9 * 1024 * 1024, 1));  // two pieces of 8 MB and 1 MB
+  const calls: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init: any) => {
+    const u = String(url);
+    if (u.includes("oauth2.googleapis.com/token")) { calls.push("refresh"); return new Response(JSON.stringify({ access_token: "fresh", expires_in: 3600 })); }
+    if (u.includes("uploadType=resumable")) {
+      calls.push(`start ${init.headers.authorization} ${JSON.parse(init.body).status.privacyStatus}`);
+      return new Response("", { status: 200, headers: { location: "https://upload.example/session" } });
+    }
+    const range = init.headers["content-range"];
+    calls.push(`put ${range}`);
+    if (range.startsWith("bytes 0-")) return new Response("", { status: 308, headers: { range: "bytes=0-8388607" } });
+    return new Response(JSON.stringify({ id: "abc123", status: { privacyStatus: "private" } }), { status: 200 });
+  }) as typeof fetch;
+  const seen: number[] = [];
+  try {
+    const v = await uploadVideo(cfg, film, { title: "T", description: "D", privacy: "unlisted" }, (f) => seen.push(f));
+    assert.deepEqual(calls, ["refresh", "start Bearer fresh unlisted", "put bytes 0-8388607/9437184", "put bytes 8388608-9437183/9437184"]);
+    assert.equal(v.url, "https://youtu.be/abc123");
+    assert.equal(v.privacy, "private");      // YouTube kept it private (an unaudited project)
+    assert.equal(v.requested, "unlisted");
+    assert.deepEqual(seen.map((f) => Math.round(f * 100)), [0, 89, 100]);
+  } finally {
+    globalThis.fetch = real;
+    delete process.env.GOOGLE_CLIENT_ID; delete process.env.GOOGLE_CLIENT_SECRET;
+  }
+});
+
+test("youtube: a stuck upload gives up, a 401 refreshes once, titles keep emoji whole, other accounts are refused", async () => {
+  const { youtubeConfig, uploadVideo, cleanTitle, authUrl, finishSignIn } = await import("../src/youtube.ts");
+  const { writeFileSync } = await import("node:fs");
+  assert.equal(cleanTitle("a".repeat(98) + "😀😀😀"), "a".repeat(98) + "😀…");
+  process.env.GOOGLE_CLIENT_ID = "cid"; process.env.GOOGLE_CLIENT_SECRET = "secret";
+  const dir = mkdtempSync(join(tmpdir(), "vg-up2-"));
+  const cfg = youtubeConfig("http://localhost:4319", dir)!;
+  const film = join(dir, "film.mp4");
+  writeFileSync(film, Buffer.alloc(1024, 1));
+  const real = globalThis.fetch, realTimeout = globalThis.setTimeout;
+  (globalThis as any).setTimeout = (fn: () => void) => realTimeout(fn, 0);  // skip the back-off waits
+  try {
+    // YouTube keeps answering 308 without taking anything: give up instead of looping forever
+    (await import("node:fs")).mkdirSync(cfg.tokenDir, { recursive: true });
+    writeFileSync(cfg.tokenFile, JSON.stringify({ access_token: "a", refresh_token: "r", expires_at: Date.now() + 3_600_000 }));
+    let puts = 0;
+    globalThis.fetch = (async (url: string) => String(url).includes("uploadType") ? new Response("", { headers: { location: "https://u/s" } }) : (puts++, new Response("", { status: 308 }))) as typeof fetch;
+    await assert.rejects(uploadVideo(cfg, film, { title: "t", description: "", privacy: "private" }), /kept failing/);
+    assert.ok(puts <= 7, `stopped after ${puts} tries`);
+    // a token that runs out mid-upload is refreshed once and the piece is sent again
+    const seen: string[] = [];
+    globalThis.fetch = (async (url: string, init: any) => {
+      const u = String(url);
+      if (u.includes("oauth2.googleapis.com/token")) { seen.push("refresh"); return new Response(JSON.stringify({ access_token: "b", expires_in: 3600 })); }
+      if (u.includes("uploadType")) return new Response("", { headers: { location: "https://u/s" } });
+      seen.push(`put ${init.headers.authorization}`);
+      return init.headers.authorization === "Bearer a" ? new Response("", { status: 401 }) : new Response(JSON.stringify({ id: "v1" }), { status: 201 });
+    }) as typeof fetch;
+    const v = await uploadVideo(cfg, film, { title: "t", description: "", privacy: "private" });
+    assert.deepEqual(seen, ["put Bearer a", "refresh", "put Bearer b"]);
+    assert.equal(v.id, "v1");
+    // GOOGLE_ALLOWED_EMAIL: another account is revoked and refused
+    process.env.GOOGLE_ALLOWED_EMAIL = "me@example.com";
+    const { state } = authUrl(cfg);
+    const idToken = "x." + Buffer.from(JSON.stringify({ email: "someone@else.com" })).toString("base64url") + ".y";
+    let revoked = false;
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes("/revoke")) { revoked = true; return new Response(""); }
+      return new Response(JSON.stringify({ access_token: "c", refresh_token: "d", scope: "openid email https://www.googleapis.com/auth/youtube.upload", id_token: idToken }));
+    }) as typeof fetch;
+    await assert.rejects(finishSignIn(cfg, "code", state), (e: any) => e.code === "account");
+    assert.ok(revoked);
+  } finally {
+    globalThis.fetch = real; (globalThis as any).setTimeout = realTimeout;
+    delete process.env.GOOGLE_CLIENT_ID; delete process.env.GOOGLE_CLIENT_SECRET; delete process.env.GOOGLE_ALLOWED_EMAIL;
+  }
+});
+
+test("youtube: every browser has its own connection", async () => {
+  const { youtubeConfig, forBrowser, youtubeStatus } = await import("../src/youtube.ts");
+  const { writeFileSync, mkdirSync } = await import("node:fs");
+  process.env.GOOGLE_CLIENT_ID = "cid"; process.env.GOOGLE_CLIENT_SECRET = "secret";
+  try {
+    const cfg = youtubeConfig("http://localhost:4319", mkdtempSync(join(tmpdir(), "vg-who-")))!;
+    const a = forBrowser(cfg, "a".repeat(43)), b = forBrowser(cfg, "b".repeat(43));
+    assert.notEqual(a.tokenFile, b.tokenFile);
+    assert.ok(!a.tokenFile.includes("aaaa"));  // the browser id itself is never written to disk
+    mkdirSync(cfg.tokenDir, { recursive: true });
+    writeFileSync(a.tokenFile, JSON.stringify({ access_token: "x", refresh_token: "y", expires_at: 0, email: "a@example.com" }));
+    assert.equal(youtubeStatus(a).email, "a@example.com");
+    assert.equal(youtubeStatus(b).connected, false);
+  } finally {
+    delete process.env.GOOGLE_CLIENT_ID; delete process.env.GOOGLE_CLIENT_SECRET;
+  }
+});
+
+test("youtube: a film remembers where it was posted", async () => {
+  const { recordPost, lastPost } = await import("../src/youtube.ts");
+  const dir = mkdtempSync(join(tmpdir(), "vg-post-"));
+  assert.equal(lastPost(dir), null);
+  recordPost(dir, { id: "abc123def45", url: "", studio: "", privacy: "unlisted", requested: "unlisted" }, "me@example.com");
+  recordPost(dir, { id: "zzz999yyy88", url: "", studio: "", privacy: "private", requested: "public" });
+  const p = lastPost(dir)!;
+  assert.equal(p.url, "https://youtu.be/zzz999yyy88");
+  assert.equal(p.studio, "https://studio.youtube.com/video/zzz999yyy88/edit");
+  assert.equal(JSON.parse(readFileSync(join(dir, "youtube.json"), "utf8")).posts.length, 2);
+});

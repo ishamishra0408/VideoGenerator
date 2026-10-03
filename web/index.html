@@ -76,10 +76,27 @@
     <div id="film" hidden>
       <div class="card player"><video id="player" controls preload="metadata" playsinline></video></div>
       <div class="head">
-        <div><h2 id="f-title"></h2><div class="meta" id="f-meta"></div></div>
-        <div class="actions"><a class="btn" id="f-mp4">MP4</a><a class="btn" id="f-srt">Captions</a><button type="button" class="btn ghost" id="f-edit">Edit storyboard</button></div>
+        <div><h2 id="f-title"></h2><div class="meta" id="f-meta"></div><div class="meta" id="f-ytlink" hidden></div></div>
+        <div class="actions"><a class="btn" id="f-mp4">MP4</a><a class="btn" id="f-srt">Captions</a><button type="button" class="btn" id="f-yt" hidden>YouTube</button><button type="button" class="btn ghost" id="f-edit">Edit storyboard</button></div>
       </div>
       <div id="f-notes"></div>
+      <div id="yt" class="card yt" hidden>
+        <p class="yt-off note" hidden>Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on this server to post to YouTube.</p>
+        <div class="yt-connect" hidden><a class="btn primary" id="yt-connect" href="/youtube/connect">Connect YouTube</a></div>
+        <div class="yt-posted" id="yt-posted" hidden></div>
+        <form class="yt-form" id="yt-form" hidden>
+          <div class="row"><span class="meta" id="yt-who"></span><button type="button" class="link plain" id="yt-disconnect">Disconnect</button></div>
+          <label class="field"><span>Title</span><input id="yt-title" maxlength="100" required></label>
+          <label class="field"><span>Description</span><textarea id="yt-desc" rows="7"></textarea></label>
+          <div class="field"><span>Visibility</span>
+            <div class="seg" id="yt-privacy"><button type="button" data-v="private" class="on">Private</button><button type="button" data-v="unlisted">Unlisted</button><button type="button" data-v="public">Public</button></div>
+          </div>
+          <div class="actions"><button type="submit" class="btn primary" id="yt-post">Post to YouTube</button></div>
+          <div class="meta" id="yt-status" hidden></div>
+          <div class="bar" id="yt-bar" hidden><i></i></div>
+          <div class="note" id="yt-done" hidden></div>
+        </form>
+      </div>
     </div>
 
     <div id="library">
