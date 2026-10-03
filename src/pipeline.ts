@@ -2,7 +2,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { join, resolve } from "node:path";
-import { CACHE_DIR, DEFAULT_MODEL, FPS, type Minutes, TRANSITION, WPM, WRITER_PRICE } from "./config.ts";
+import { CACHE_DIR, DEFAULT_MODEL, FPS, type Minutes, RENDER, TRANSITION, WPM, WRITER_PRICE } from "./config.ts";
 import { addSpend, costLine, recordCost, zero, type FilmCost, type RunCost, type Spend } from "./cost.ts";
 import { computeCues, sfxEvents } from "./cues.ts";
 import { mix, writeWav } from "./audio.ts";
@@ -168,7 +168,7 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
       return { dir, plan, warnings, words, captions, duration: timing.duration, stills, cost: settle("film") };
     }
     const fps = job.fps ?? FPS;
-    const workers = job.workers ?? Math.max(1, Math.min(4, Math.floor(cpus().length / 2)));
+    const workers = job.workers ?? RENDER.workers ?? Math.max(1, Math.min(4, Math.floor(cpus().length / 2)));
     const video = join(dir, `${base}-${Math.max(1, Math.round(timing.duration / 60))}min.mp4`);
     const t0 = Date.now();
     report({ stage: "render", message: `Filming ${Math.ceil(timing.duration * fps)} frames in ${workers} tabs`, fraction: 0 });

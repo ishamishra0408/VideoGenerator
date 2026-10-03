@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { SceneCues } from "./cues.ts";
 import type { Plan } from "./plan.ts";
 import { chromePath, ffmpegPath, run } from "./proc.ts";
+import { RENDER } from "./config.ts";
 
 const STAGE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "stage");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -70,8 +71,11 @@ class Cdp {
 
 async function launchChrome(): Promise<{ port: number; proc: ChildProcess; dir: string }> {
   const dir = mkdtempSync(join(tmpdir(), "videogen-chrome-"));
+  // In a container Chrome runs as root with a tiny /dev/shm: no sandbox there, and shared memory on disk.
+  const container = process.getuid?.() === 0 || process.env.CHROME_NO_SANDBOX === "1";
   const proc = spawn(chromePath(), ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${dir}`, "--no-first-run", "--no-default-browser-check",
-    "--hide-scrollbars", "--mute-audio", "--force-device-scale-factor=1", "--window-size=1920,1080", "about:blank"], { stdio: "ignore" });
+    "--hide-scrollbars", "--mute-audio", "--disable-gpu", "--disable-dev-shm-usage", "--disable-extensions", ...(container ? ["--no-sandbox"] : []),
+    "--force-device-scale-factor=1", "--window-size=1920,1080", "about:blank"], { stdio: "ignore" });
   const portFile = join(dir, "DevToolsActivePort");
   for (let i = 0; i < 100; i++) {
     if (existsSync(portFile)) {
@@ -89,7 +93,8 @@ async function openStage(port: number, file: string, fresh: boolean): Promise<Cd
     ? await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" })).json()
     : ((await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as any[]).find((t) => t.type === "page");
   const cdp = await Cdp.connect(target.webSocketDebuggerUrl);
-  await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1920, height: 1080, deviceScaleFactor: 1, mobile: false });
+  // the stage is always laid out at 1920×1080; a smaller scale only shrinks the captured frames
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1920, height: 1080, deviceScaleFactor: RENDER.scale, mobile: false });
   await cdp.send("Runtime.enable");
   await cdp.send("Page.enable");
   await cdp.send("Page.navigate", { url: pathToFileURL(file).href });
@@ -152,7 +157,7 @@ export async function renderVideo(o: FilmOptions): Promise<void> {
     await Promise.all(tabs.map(async (cdp, w) => {
       const from = Math.floor((total * w) / workers), to = Math.floor((total * (w + 1)) / workers);
       const enc = spawn(ff, ["-loglevel", "error", "-y", "-f", "image2pipe", "-framerate", String(o.fps), "-c:v", "mjpeg", "-i", "-",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-r", String(o.fps), segs[w]], { stdio: ["pipe", "ignore", "pipe"] });
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-c:v", "libx264", "-preset", RENDER.preset, "-crf", "19", "-pix_fmt", "yuv420p", "-r", String(o.fps), segs[w]], { stdio: ["pipe", "ignore", "pipe"] });
       encoders.push(enc);
       let err = "";
       enc.stderr!.on("data", (d) => (err += d));

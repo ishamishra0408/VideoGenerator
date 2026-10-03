@@ -89,8 +89,12 @@
     host.textContent = "";
     (list || []).forEach(function (w) { var d = document.createElement("div"); d.className = "note"; d.textContent = w; host.appendChild(d); });
   }
+  var ping = null;
   function busy(on) {
     S.busy = on;
+    // a free Render server sleeps after 15 quiet minutes; a request a minute keeps it awake while it films
+    if (on && !ping) ping = setInterval(function () { fetch("/api/status").catch(function () {}); }, 60000);
+    if (!on && ping) { clearInterval(ping); ping = null; }
     ["#go-board", "#go-film", "#b-film", "#f-edit"].forEach(function (s) { $(s).disabled = on || (!S.key && (s === "#go-board" || s === "#go-film")); });
   }
   var clock = function (sec) { var m = Math.floor(sec / 60), s = Math.round(sec % 60); if (s === 60) { m++; s = 0; } return m + ":" + (s < 10 ? "0" : "") + s; };

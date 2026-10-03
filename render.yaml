@@ -1,0 +1,23 @@
+# VideoGenerator on Render: one Docker web service behind a password.
+# Every film spends the OpenRouter key's credit, so the server won't start without VIDEOGEN_PASSWORD.
+# The free plan is small (512 MB, a tenth of a CPU) and sleeps when idle: films render at 720p in one
+# Chrome tab with a faster encoder, and nothing is kept across restarts, so download each film when it's done.
+services:
+  - type: web
+    name: videogenerator
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: VIDEOGEN_PASSWORD
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: VIDEOGEN_SCALE
+        value: "0.6667"
+      - key: VIDEOGEN_WORKERS
+        value: "1"
+      - key: VIDEOGEN_PRESET
+        value: veryfast

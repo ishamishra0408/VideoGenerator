@@ -38,6 +38,28 @@ node src/cli.ts --from examples/storyboard.json --voice say
 
 Pick a theme under **Theme**: GitDiagram's own, or any 21st.dev community theme in its light or dark version, with its colours and font shown as swatches. Past films are listed underneath, with the MP4 and captions to download. Re-filming an edited storyboard only re-voices the sentences you changed; the rest come from the cache.
 
+## Deploy on Render
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ishamishra0408/VideoGenerator)
+
+`render.yaml` describes one Docker web service (Node 22, Chromium, ffmpeg). Render asks for two secrets when you create it:
+
+- `OPENROUTER_API_KEY`: pays for the storyboard and the voice.
+- `VIDEOGEN_PASSWORD`: 8 or more characters. The page asks for it before anything else, because every film spends the key's credit. The server won't start without it when it listens beyond the machine it runs on.
+
+`GITHUB_TOKEN` is optional, as above. The blueprint uses the free plan, which is small (512 MB, a tenth of a CPU) and sleeps when idle, so films render at 720p in one Chrome tab with a faster encoder, and the page pings the server while a film renders so it stays awake. Nothing is kept across restarts or deploys: download each film when it's done. On a bigger plan, raise `VIDEOGEN_SCALE` to `1` (1080p), `VIDEOGEN_WORKERS` and `VIDEOGEN_PRESET`.
+
+| Variable | Default | |
+|---|---|---|
+| `HOST`, `PORT` | `127.0.0.1`, `4319` | Where the page listens. The Docker image uses `0.0.0.0:10000`. |
+| `VIDEOGEN_PASSWORD` | none | Required unless `HOST` is local |
+| `ALLOWED_HOSTS` | Render's own hostname | Extra host names to accept, comma-separated |
+| `VIDEOGEN_SCALE` | `1` | `0.6667` films at 720p, `0.5` at 540p |
+| `VIDEOGEN_WORKERS` | up to 4 | Chrome tabs filming in parallel |
+| `VIDEOGEN_PRESET` | `medium` | x264 preset, e.g. `veryfast` |
+| `VIDEOGEN_FPS` | `25` | Frames a second |
+| `CHROME_PATH`, `FFMPEG_PATH` | found on the system | |
+
 ## Options
 
 | Flag | What it does |

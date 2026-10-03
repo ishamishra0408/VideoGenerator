@@ -1,0 +1,7 @@
+.env
+.env.*
+out
+.videogen-cache
+node_modules
+.git
+.DS_Store

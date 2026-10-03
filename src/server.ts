@@ -1,5 +1,5 @@
 // The web page's server: local only, one film at a time, progress streamed to the page as it happens.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
@@ -13,7 +13,32 @@ import { listThemes, loadTheme, parseThemeSpec } from "./theme.ts";
 const WEB = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
 const OUT = resolve("out");
 const PORT = Number(process.env.PORT) || 4319;
-const HOST = "127.0.0.1";
+const HOST = process.env.HOST || "127.0.0.1";
+const PASSWORD = process.env.VIDEOGEN_PASSWORD ?? "";
+const LOCAL = HOST === "127.0.0.1" || HOST === "localhost" || HOST === "::1";
+// Every film spends the OpenRouter key's credit, so the page is never served beyond this machine without a password.
+if (!LOCAL && PASSWORD.length < 8) {
+  console.error("videogen: set VIDEOGEN_PASSWORD (8 or more characters) before listening on " + HOST + ".");
+  process.exit(1);
+}
+const HOSTS = new Set(["127.0.0.1", "localhost", process.env.RENDER_EXTERNAL_HOSTNAME, ...(process.env.ALLOWED_HOSTS ?? "").split(",")].map((h) => h?.trim()).filter(Boolean));
+
+const digest = (s: string) => createHash("sha256").update(s).digest();
+const failures = new Map<string, { n: number; since: number }>();
+/** Basic auth, any user name, compared in constant time; ten wrong tries from one address lock it out for ten minutes. */
+function authorised(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!PASSWORD) return true;
+  // behind Render's proxy the real client is the last address it appends, not anything the client sent
+  const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",").pop()!.trim();
+  const f = failures.get(ip);
+  if (f && f.n >= 10 && Date.now() - f.since < 600_000) { res.writeHead(429).end("Too many tries. Wait ten minutes."); return false; }
+  const m = /^Basic (.+)$/.exec(req.headers.authorization ?? "");
+  const pass = m ? Buffer.from(m[1], "base64").toString("utf8").split(":").slice(1).join(":") : null;
+  if (pass !== null && timingSafeEqual(digest(pass), digest(PASSWORD))) { failures.delete(ip); return true; }
+  if (pass !== null) failures.set(ip, { n: (f && Date.now() - f.since < 600_000 ? f.n : 0) + 1, since: f && Date.now() - f.since < 600_000 ? f.since : Date.now() });
+  res.writeHead(401, { "www-authenticate": 'Basic realm="videogen", charset="UTF-8"' }).end("Password needed.");
+  return false;
+}
 
 type Event = ({ type: "progress" } & Progress) | { type: "done"; result: unknown } | { type: "error"; message: string };
 interface Run { id: string; kind: "storyboard" | "film"; status: "queued" | "running" | "done" | "failed"; events: Event[]; listeners: Set<ServerResponse> }
@@ -143,9 +168,11 @@ function toJob(b: any): Job {
 const server = createServer(async (req, res) => {
   // Local only: refuse other hosts (DNS rebinding) and non-JSON posts (cross-site forms).
   const host = (req.headers.host ?? "").replace(/:\d+$/, "");
-  if (host !== "127.0.0.1" && host !== "localhost") { res.writeHead(403).end(); return; }
+  if (!HOSTS.has(host)) { res.writeHead(403).end(); return; }
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   const path = url.pathname;
+  if (path === "/healthz") { res.writeHead(200).end("ok"); return; }
+  if (!authorised(req, res)) return;
   try {
     if (req.method === "GET" && (path === "/" || path === "/app.js" || path === "/app.css")) {
       return sendFile(req, res, join(WEB, path === "/" ? "index.html" : path.slice(1)));
@@ -191,4 +218,4 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => console.log(`videogen is at http://localhost:${PORT}`));
+server.listen(PORT, HOST, () => console.log(`videogen is at http://${LOCAL ? "localhost" : HOST}:${PORT}${PASSWORD ? " (password required)" : ""}`));
