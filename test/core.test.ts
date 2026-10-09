@@ -9,6 +9,7 @@ import { computeCues, itemTimes, sfxEvents } from "../src/cues.ts";
 import { parseRepo, pickFiles, refusalMessage, type RepoContext } from "../src/github.ts";
 import { extractJson } from "../src/llm.ts";
 import { checkPlan, cleanLine, codeOverlap, makePlan, redistribute, validatePlanShape, type Plan, type Scene } from "../src/plan.ts";
+import { timeLeft } from "../src/pipeline.ts";
 import { parseScript, splitSentences, stripMarkdown } from "../src/sentences.ts";
 import { captionChunks, layout, toSrt } from "../src/timing.ts";
 
@@ -112,6 +113,12 @@ test("github: a spent rate limit says when it comes back and where the token goe
   assert.ok(refusalMessage(403, spent, true, now).includes("this GITHUB_TOKEN"));
   assert.ok(refusalMessage(429, new Headers({ "retry-after": "30" }), false, now).includes("1 min"));
   assert.ok(refusalMessage(403, new Headers(), false, now).startsWith("GitHub refused"));
+});
+
+test("pipeline: time left reads in seconds, minutes, then hours", () => {
+  assert.equal(timeLeft(44.2), "45 s");
+  assert.equal(timeLeft(2449), "41 min");
+  assert.equal(timeLeft(7593), "2 h 7 min");
 });
 
 test("llm: JSON inside a fence or prose", () => {

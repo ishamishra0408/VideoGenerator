@@ -101,10 +101,19 @@ async function openStage(port: number, file: string, fresh: boolean): Promise<Cd
   for (let i = 0; i < 100; i++) {
     await sleep(100);
     const r = await cdp.send("Runtime.evaluate", { expression: "!!window.STAGE_READY", returnByValue: true });
-    if (r.result?.value) return cdp;
+    if (r.result?.value) { await freezeBackground(cdp); return cdp; }
     if (cdp.errors.length) break;
   }
   throw new Error(`The stage didn't load${cdp.errors.length ? `: ${cdp.errors[0]}` : "."}`);
+}
+
+/** Chrome repaints the blurred background under every change, which was most of a frame's cost (measured at 720p: 260 ms of
+ *  CPU a frame, 85 ms with this). Photograph the background alone once and let the picture stand in for it. */
+async function freezeBackground(cdp: Cdp): Promise<void> {
+  await cdp.send("Runtime.evaluate", { expression: "backgroundOnly()", awaitPromise: true });
+  const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });
+  const r = await cdp.send("Runtime.evaluate", { expression: `freezeBackground("data:image/png;base64,${data}")`, awaitPromise: true });
+  if (r.exceptionDetails) throw new Error(`The stage's background didn't freeze: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
 }
 
 async function shot(cdp: Cdp, t: number, format: "jpeg" | "png"): Promise<Buffer> {

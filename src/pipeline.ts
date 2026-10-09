@@ -56,6 +56,12 @@ export interface JobResult {
 
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "film";
 const clampMinutes = (m: number) => Math.min(4, Math.max(1, Math.round(m))) as Minutes;
+/** 45 s, 12 min, 1 h 5 min */
+export const timeLeft = (s: number) => {
+  if (s < 90) return `${Math.ceil(s)} s`;
+  const m = Math.round(s / 60);
+  return m < 90 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+};
 
 export async function runJob(job: Job, report: (p: Progress) => void = () => {}): Promise<JobResult> {
   const warnings: string[] = [];
@@ -170,13 +176,15 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
     const fps = job.fps ?? FPS;
     const workers = job.workers ?? RENDER.workers ?? Math.max(1, Math.min(4, Math.floor(cpus().length / 2)));
     const video = join(dir, `${base}-${Math.max(1, Math.round(timing.duration / 60))}min.mp4`);
-    const t0 = Date.now();
     report({ stage: "render", message: `Filming ${Math.ceil(timing.duration * fps)} frames in ${workers} tabs`, fraction: 0 });
+    let first: { at: number; done: number } | undefined;
     await renderVideo({
       stageFile, audio: soundtrack, out: video, duration: timing.duration, fps, workers,
       onProgress: (done, total) => {
-        const secs = (Date.now() - t0) / 1000, left = done ? (secs / done) * (total - done) : 0;
-        report({ stage: "render", message: `${done}/${total} frames, about ${Math.ceil(left)} s left`, fraction: done / total });
+        // timed from the first frames, so Chrome's start-up (slow on a small server) doesn't count as filming
+        first ??= { at: Date.now(), done };
+        const left = done > first.done ? ((Date.now() - first.at) / (done - first.done)) * (total - done) / 1000 : 0;
+        report({ stage: "render", message: `${done}/${total} frames${left ? `, about ${timeLeft(left)} left` : ""}`, fraction: done / total });
       },
     });
     const m = Math.floor(timing.duration / 60), s = Math.round(timing.duration % 60);
