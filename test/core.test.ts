@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { readWav, synth, writeWav } from "../src/audio.ts";
 import { GAPS } from "../src/config.ts";
 import { computeCues, itemTimes, sfxEvents } from "../src/cues.ts";
-import { parseRepo, pickFiles, type RepoContext } from "../src/github.ts";
+import { parseRepo, pickFiles, refusalMessage, type RepoContext } from "../src/github.ts";
 import { extractJson } from "../src/llm.ts";
 import { checkPlan, cleanLine, codeOverlap, makePlan, redistribute, validatePlanShape, type Plan, type Scene } from "../src/plan.ts";
 import { parseScript, splitSentences, stripMarkdown } from "../src/sentences.ts";
@@ -102,6 +102,16 @@ test("github: repo names in the forms people paste", () => {
   const picked = pickFiles(ctx.paths);
   assert.equal(picked[0], "package.json");
   assert.ok(picked.includes("src/index.ts") && !picked.includes("test/api.test.ts"));
+});
+
+test("github: a spent rate limit says when it comes back and where the token goes", () => {
+  const now = 1_700_000_000_000;
+  const spent = new Headers({ "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(now / 1000 + 600) });
+  const anon = refusalMessage(403, spent, false, now);
+  assert.ok(anon.includes("10 min") && anon.includes("Environment on Render"));
+  assert.ok(refusalMessage(403, spent, true, now).includes("this GITHUB_TOKEN"));
+  assert.ok(refusalMessage(429, new Headers({ "retry-after": "30" }), false, now).includes("1 min"));
+  assert.ok(refusalMessage(403, new Headers(), false, now).startsWith("GitHub refused"));
 });
 
 test("llm: JSON inside a fence or prose", () => {
