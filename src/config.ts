@@ -20,12 +20,14 @@ export const DEFAULT_MODEL = "claude-opus-5-5";
 /** GitDiagram's narrator: Gemini 3.8 Flash TTS, the Charon voice, and its style direction. */
 export const VOICE = {
   model: "google/gemini-3.8-flash-tts",
+  /** The same model on Google's own Gemini API. */
+  googleModel: "gemini-3.8-flash-tts",
   name: "Charon",
   style:
     "a warm, confident senior engineer telling a smart colleague the story of a project they love; " +
     "natural conversational pace with varied rhythm, breathing at commas and full stops",
   pcmRate: 24_000,
-  /** Used only when OpenRouter's own figure isn't available: $ per token, and audio tokens per second of
+  /** Google's paid rates (the same on OpenRouter), used when there's no billed figure: $ per token, and audio tokens per second of
    *  trimmed clip (measured: 171 tokens for a 4.6 s clip, about 32 a second before the silence is trimmed). */
   price: { input: 0.5e-6, output: 9e-6, audioTokensPerSecond: 36 },
 } as const;

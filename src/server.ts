@@ -263,7 +263,8 @@ const server = createServer(async (req, res) => {
       return f ? sendFile(req, res, f) : void res.writeHead(404).end();
     }
     if (req.method === "GET" && path === "/api/status") {
-      const missing = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"].filter((k) => !process.env[k]?.trim());
+      const has = (k: string) => !!process.env[k]?.trim();
+      const missing = [!has("ANTHROPIC_API_KEY") && "ANTHROPIC_API_KEY", !has("GEMINI_API_KEY") && !has("OPENROUTER_API_KEY") && "GEMINI_API_KEY"].filter(Boolean);
       return json(res, 200, { auth: !!PASSWORD, key: !missing.length, missing, offline: process.platform === "darwin", model: DEFAULT_MODEL, busy: [...runs.values()].some((r) => r.status === "running" || r.status === "queued") });
     }
     if (req.method === "GET" && path === "/api/library") return json(res, 200, library());

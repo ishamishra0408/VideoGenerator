@@ -1,4 +1,4 @@
-// The narrator: GitDiagram's Gemini Charon voice through OpenRouter, or macOS `say` offline.
+// The narrator: GitDiagram's Gemini Charon voice from Google's Gemini API or through OpenRouter, or macOS `say` offline.
 // One clip per sentence, trimmed of edge silence, cached by what was said and how.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -9,9 +9,12 @@ import { wavDuration } from "./audio.ts";
 import { ffmpegPath, run } from "./proc.ts";
 
 export type Backend = "gemini" | "say";
-export interface VoiceOptions { backend: Backend; key?: string; cacheDir: string; concurrency?: number }
+/** Where the Gemini voice comes from: Google's own API, or OpenRouter. The voice and the cached clips are the same. */
+export type Via = "google" | "openrouter";
+export interface VoiceOptions { backend: Backend; key?: string; via?: Via; cacheDir: string; concurrency?: number }
 
 const SPEECH = "https://openrouter.ai/api/v1/audio/speech";
+const INTERACTIONS = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const TRIM = "silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_threshold=-50dB,areverse";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -20,7 +23,50 @@ export function clipKey(text: string, backend: Backend): string {
   return createHash("sha256").update(JSON.stringify([backend, ...how, text])).digest("hex").slice(0, 20);
 }
 
-async function gemini(text: string, key: string): Promise<{ audio: Buffer; id?: string }> {
+/** The Gemini voice's key: Google's own when GEMINI_API_KEY is set, else OpenRouter's. */
+export function voiceAccess(): { via: Via; key: string } {
+  const google = process.env.GEMINI_API_KEY?.trim(), openrouter = process.env.OPENROUTER_API_KEY?.trim();
+  if (google) return { via: "google", key: google };
+  if (openrouter) return { via: "openrouter", key: openrouter };
+  throw new Error("The voice needs GEMINI_API_KEY (from Google AI Studio) or OPENROUTER_API_KEY. Put one in .env (see .env.example).");
+}
+
+/** One clip from Google's Gemini API: WAV by default, raw PCM if Google ever sends that instead. */
+async function google(text: string, key: string): Promise<{ audio: Buffer }> {
+  const body = JSON.stringify({
+    model: VOICE.googleModel,
+    input: [{ type: "user_input", content: [{ type: "text", text, annotations: [{ type: "speech_metadata", style: VOICE.style }] }] }],
+    response_format: { type: "audio" },
+    generation_config: { speech_config: [{ voice: VOICE.name }] },
+  });
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(INTERACTIONS, {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "content-type": "application/json" },
+      body,
+      signal: AbortSignal.timeout(120_000),
+    }).catch((e) => ({ ok: false, status: 0, text: async () => String(e) }) as unknown as Response);
+    if (res.ok) {
+      const j = (await res.json()) as { steps?: { content?: { type?: string; data?: string }[] }[] };
+      const data = j.steps?.flatMap((s) => s.content ?? []).find((c) => c.type === "audio" && c.data)?.data;
+      if (data) return { audio: Buffer.from(data, "base64") };
+      throw new Error("Google's voice answered without audio.");
+    }
+    const err = await res.text();
+    // the free tier's per-minute limit says how long to wait; a spent daily limit doesn't, and waiting won't help
+    const wait = Number(/"retryDelay":\s*"(\d+(?:\.\d+)?)s"/.exec(err)?.[1]);
+    if (res.status === 429 && wait > 0 && wait <= 90 && attempt < 6) { await sleep(wait * 1000 + 500); continue; }
+    if (res.status === 429) throw new Error(`Google's limit for the voice is spent: ${message(err)} Finished clips are cached, so run again later, or turn on billing for the key in Google AI Studio.`);
+    if ((res.status === 400 && /API key/i.test(err)) || res.status === 401 || res.status === 403) throw new Error(`Google rejected GEMINI_API_KEY (${res.status}): ${message(err)}`);
+    if ((res.status === 0 || res.status >= 500) && attempt < 4) { await sleep(1500 * 2 ** attempt); continue; }
+    throw new Error(`The voice failed (${res.status}): ${message(err)}`);
+  }
+}
+
+/** Google's own wording from an error body, or the body itself. */
+const message = (body: string) => { try { return JSON.parse(body).error?.message ?? body.slice(0, 200); } catch { return body.slice(0, 200); } };
+
+async function openrouter(text: string, key: string): Promise<{ audio: Buffer; id?: string }> {
   const body = JSON.stringify({
     model: VOICE.model,
     input: text,
@@ -36,7 +82,7 @@ async function gemini(text: string, key: string): Promise<{ audio: Buffer; id?: 
       signal: AbortSignal.timeout(120_000),
     }).catch((e) => ({ ok: false, status: 0, text: async () => String(e) }) as unknown as Response);
     if (res.ok) return { audio: Buffer.from(await res.arrayBuffer()), id: res.headers.get("x-generation-id") ?? undefined };
-    if (res.status === 402) throw new Error("OpenRouter says the balance is empty (402). Top it up, then run again (finished clips are cached).");
+    if (res.status === 402) throw new Error("OpenRouter says the balance is empty (402). Top it up, or set GEMINI_API_KEY to use Google's own Gemini API, then run again (finished clips are cached).");
     if (res.status === 401) throw new Error("OpenRouter rejected the key (401). Check OPENROUTER_API_KEY.");
     if ((res.status === 0 || res.status === 429 || res.status >= 500) && attempt < 4) { await sleep(1500 * 2 ** attempt); continue; }
     throw new Error(`The voice failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
@@ -49,10 +95,11 @@ async function makeClip(text: string, out: string, opts: VoiceOptions): Promise<
   const tmp = out + ".part", wav = out + ".tmp.wav";  // the cache only ever holds finished clips
   let id: string | undefined;
   if (opts.backend === "gemini") {
-    const take = await gemini(text, opts.key!);
-    id = take.id;
+    const take = opts.via === "google" ? await google(text, opts.key!) : await openrouter(text, opts.key!);
+    id = "id" in take ? take.id : undefined;
     writeFileSync(tmp, take.audio);
-    await run(ff, ["-loglevel", "error", "-y", "-f", "s16le", "-ar", String(VOICE.pcmRate), "-ac", "1", "-i", tmp,
+    const raw = take.audio.subarray(0, 4).toString("latin1") !== "RIFF";  // OpenRouter sends bare PCM; Google, a WAV
+    await run(ff, ["-loglevel", "error", "-y", ...(raw ? ["-f", "s16le", "-ar", String(VOICE.pcmRate), "-ac", "1"] : []), "-i", tmp,
       "-af", TRIM, "-ac", "1", "-ar", String(SAMPLE_RATE), "-sample_fmt", "s16", "-f", "wav", wav]);
   } else {
     if (process.platform !== "darwin") throw new Error("The offline voice uses macOS `say`. Use --voice gemini elsewhere.");
@@ -90,7 +137,8 @@ export async function speakAll(lines: string[], opts: VoiceOptions, log: (s: str
 }
 
 /** What the new clips cost, from OpenRouter's generation records. They appear a few seconds after each call,
- *  so this waits and retries; a clip it still can't find is priced from its length instead, marked approximate. */
+ *  so this waits and retries; a clip it still can't find, or one from Google (which reports no price, and costs
+ *  nothing on its free tier), is priced from its length at the paid rate instead, marked approximate. */
 export async function voiceCost(fresh: FreshClip[], backend: Backend, key?: string): Promise<Spend> {
   const spend = zero();
   if (backend !== "gemini") return spend;
