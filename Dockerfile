@@ -6,7 +6,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY package.json LICENSE README.md ./
+COPY package.json package-lock.json LICENSE README.md ./
+RUN npm ci --omit=dev
 COPY src ./src
 COPY stage ./stage
 COPY web ./web

@@ -200,18 +200,26 @@ test("cost: money reads naturally, and a film's runs add up", async () => {
   assert.equal(costLine(film, total), "≈1.6¢ this run · voice ≈1.6¢ (10 new, 2 cached) · ≈5.6¢ for this film in all");
 });
 
-test("llm: OpenRouter's usage and cost come back with the text, empty replies included", async () => {
+/** A streamed Claude API reply, as the SDK reads it. */
+const claudeReply = (text: string, input: number, output: number) => new Response([
+  ["message_start", { type: "message_start", message: { id: "m", type: "message", role: "assistant", model: "claude-opus-5-5", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: input, output_tokens: 1 } } }],
+  ["content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }],
+  ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }],
+  ["content_block_stop", { type: "content_block_stop", index: 0 }],
+  ["message_delta", { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: output } }],
+  ["message_stop", { type: "message_stop" }],
+].map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+
+test("llm: Claude's token counts and price come back with the text, empty replies included", async () => {
   const { chat } = await import("../src/llm.ts");
-  const replies = [
-    { choices: [{ message: { content: "" } }], usage: { prompt_tokens: 100, completion_tokens: 0, cost: 0.0002 } },
-    { choices: [{ message: { content: "{}" } }], usage: { prompt_tokens: 100, completion_tokens: 10, cost: 0.0003 } },
-  ];
+  const replies = [claudeReply("", 100, 0), claudeReply("{}", 100, 10)];
   const real = globalThis.fetch;
-  globalThis.fetch = (async () => new Response(JSON.stringify(replies.shift()), { status: 200 })) as typeof fetch;
+  globalThis.fetch = (async () => replies.shift()) as typeof fetch;
   try {
-    const r = await chat({ key: "k", model: "m", system: "s", messages: [{ role: "user", content: "u" }] });
+    const r = await chat({ key: "k", model: "claude-opus-5-5", system: "s", messages: [{ role: "user", content: "u" }] });
     assert.equal(r.text, "{}");
-    assert.deepEqual(r.usage, { prompt: 200, completion: 10, cost: 0.0005 });
+    assert.deepEqual([r.usage.prompt, r.usage.completion], [200, 10]);
+    assert.ok(Math.abs(r.usage.cost! - (200 * 4e-6 + 10 * 20e-6)) < 1e-12);
   } finally {
     globalThis.fetch = real;
   }
@@ -268,10 +276,10 @@ test("cost: a run that fails after paying still records the spend", async () => 
   writeFileSync(join(repo, "README.md"), "# Widget\nA tiny widget server.");
   const line = Array(48).fill("word").join(" ") + ".";
   const board = { beats: [1, 2, 3].map((i) => ({ title: `B${i}`, scenes: [{ kind: i === 1 ? "title" : "statement", heading: "H", lines: [line], items: [] }] })) };
-  const real = globalThis.fetch, key = process.env.OPENROUTER_API_KEY;
-  process.env.OPENROUTER_API_KEY = "test";
+  const real = globalThis.fetch, keys = { a: process.env.ANTHROPIC_API_KEY, o: process.env.OPENROUTER_API_KEY };
+  process.env.ANTHROPIC_API_KEY = process.env.OPENROUTER_API_KEY = "test";
   globalThis.fetch = (async (url: string) => {
-    if (String(url).includes("/chat/completions")) return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(board) } }], usage: { prompt_tokens: 15000, completion_tokens: 900, cost: 0.039 } }));
+    if (String(url).includes("/v1/messages")) return claudeReply(JSON.stringify(board), 15000, 900);
     if (String(url).includes("/audio/speech")) return new Response("no credit", { status: 402 });
     return new Response("", { status: 404 });  // fonts: unavailable, falls back
   }) as typeof fetch;
@@ -279,11 +287,11 @@ test("cost: a run that fails after paying still records the spend", async () => 
     await assert.rejects(runJob({ repo, minutes: 1, outDir: out, voice: "gemini" }), /402/);
     const c = readCost(out)!;
     assert.equal(c.runs[0].kind, "failed");
-    assert.equal(c.runs[0].storyboard.usd, 0.039);
-    assert.equal(c.usd, 0.039);
+    assert.equal(c.runs[0].storyboard.usd, 0.078);  // 15,000 in at $4 a million, 900 out at $20
+    assert.equal(c.usd, 0.078);
   } finally {
     globalThis.fetch = real;
-    if (key === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = key;
+    for (const [k, v] of [["ANTHROPIC_API_KEY", keys.a], ["OPENROUTER_API_KEY", keys.o]] as const) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   }
 });
 

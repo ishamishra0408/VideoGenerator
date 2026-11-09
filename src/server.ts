@@ -17,7 +17,7 @@ const PORT = Number(process.env.PORT) || 4319;
 const HOST = process.env.HOST || "127.0.0.1";
 const PASSWORD = process.env.VIDEOGEN_PASSWORD ?? "";
 const LOCAL = HOST === "127.0.0.1" || HOST === "localhost" || HOST === "::1";
-// Every film spends the OpenRouter key's credit, so the page is never served beyond this machine without a password.
+// Every film spends the keys' credit, so the page is never served beyond this machine without a password.
 if (!LOCAL && PASSWORD.length < 8) {
   console.error("videogen: set VIDEOGEN_PASSWORD (8 or more characters) before listening on " + HOST + ".");
   process.exit(1);
@@ -230,7 +230,7 @@ function toJob(b: any): Job {
   if (b.adapt === true) job.adapt = true;
   if (typeof b.brief === "string" && b.brief.trim()) job.brief = b.brief.trim().slice(0, 400);
   if (b.voice === "gemini" || b.voice === "say") job.voice = b.voice;
-  if (typeof b.model === "string" && /^[\w.-]+\/[\w.:-]+$/.test(b.model)) job.model = b.model;
+  if (typeof b.model === "string" && /^claude-[\w.-]+$/.test(b.model)) job.model = b.model;
   if (b.plan && typeof b.plan === "object") job.plan = b.plan;
   if (typeof b.theme === "string" && parseThemeSpec(b.theme)) job.theme = b.theme;
   if (b.themeMode === "light" || b.themeMode === "dark") job.themeMode = b.themeMode;
@@ -263,7 +263,8 @@ const server = createServer(async (req, res) => {
       return f ? sendFile(req, res, f) : void res.writeHead(404).end();
     }
     if (req.method === "GET" && path === "/api/status") {
-      return json(res, 200, { auth: !!PASSWORD, key: !!process.env.OPENROUTER_API_KEY?.trim(), offline: process.platform === "darwin", model: DEFAULT_MODEL, busy: [...runs.values()].some((r) => r.status === "running" || r.status === "queued") });
+      const missing = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"].filter((k) => !process.env[k]?.trim());
+      return json(res, 200, { auth: !!PASSWORD, key: !missing.length, missing, offline: process.platform === "darwin", model: DEFAULT_MODEL, busy: [...runs.values()].some((r) => r.status === "running" || r.status === "queued") });
     }
     if (req.method === "GET" && path === "/api/library") return json(res, 200, library());
 

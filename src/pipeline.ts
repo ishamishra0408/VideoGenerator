@@ -2,7 +2,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { join, resolve } from "node:path";
-import { CACHE_DIR, DEFAULT_MODEL, FPS, type Minutes, RENDER, TRANSITION, WPM, WRITER_PRICE } from "./config.ts";
+import { CACHE_DIR, DEFAULT_MODEL, FPS, type Minutes, RENDER, TRANSITION, WPM, WRITER_PRICES } from "./config.ts";
 import { addSpend, costLine, recordCost, zero, type FilmCost, type RunCost, type Spend } from "./cost.ts";
 import { computeCues, sfxEvents } from "./cues.ts";
 import { mix, writeWav } from "./audio.ts";
@@ -50,7 +50,7 @@ export interface JobResult {
   captions?: string;
   duration?: number;
   stills?: string[];
-  /** What this run spent on OpenRouter, and the film's total across its runs. */
+  /** What this run spent on the Claude API and OpenRouter, and the film's total across its runs. */
   cost: { run: RunCost; film: FilmCost; line: string };
 }
 
@@ -98,7 +98,7 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
       dir = resolve(job.outDir ?? join("out", `${slug(plan.title)}-${clampMinutes(planWords(plan) / WPM)}min`));
     } else {
       if (!job.repo) throw new Error("Give a repo: owner/name, a GitHub URL or a folder.");
-      const key = requireKey("OPENROUTER_API_KEY");
+      const key = requireKey("ANTHROPIC_API_KEY");
       report({ stage: "repo", message: `Reading ${job.repo}` });
       const context = await loadRepo(job.repo);
       report({ stage: "repo", message: `${context.paths.length} files, ${context.files.length} read closely` });
@@ -122,7 +122,7 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
         async (system, messages) => {
           const { text, usage } = await chat({ key, model, system, messages });
           const exact = usage.cost !== undefined;
-          addSpend(storyboardSpend, usage.cost ?? usage.prompt * WRITER_PRICE.input + usage.completion * WRITER_PRICE.output, usage.prompt, usage.completion, exact);
+          addSpend(storyboardSpend, usage.cost ?? usage.prompt * WRITER_PRICES[DEFAULT_MODEL].input + usage.completion * WRITER_PRICES[DEFAULT_MODEL].output, usage.prompt, usage.completion, exact);
           return text;
         },
         (s) => report({ stage: "storyboard", message: s }),
