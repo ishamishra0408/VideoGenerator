@@ -225,14 +225,19 @@ test("llm: Claude's token counts and price come back with the text, empty replie
   }
 });
 
-test("voice: Google's Gemini API speaks a clip, waits out a per-minute limit, and names a spent daily one", async () => {
+test("voice: Google's Gemini API speaks a clip, waits out its per-minute limit, and stops at a spent daily one", async () => {
   const { speakAll, voiceAccess } = await import("../src/voice.ts");
   const dir = mkdtempSync(join(tmpdir(), "vg-voice-"));
   const wav = join(dir, "take.wav");
   writeWav(wav, Float32Array.from({ length: 12_000 }, (_, i) => 0.4 * Math.sin(i / 10)), 24_000);
   const audio = readFileSync(wav).toString("base64");
-  const limit = (retry?: string) => new Response(JSON.stringify({ error: { code: 429, message: "Quota exceeded", details: retry ? [{ retryDelay: retry }] : [] } }), { status: 429 });
-  const replies = [limit("0.1s"), new Response(JSON.stringify({ steps: [{ type: "model_output", content: [{ type: "audio", data: audio }] }] })), limit()];
+  const limit = (message: string, retry?: string) => new Response(JSON.stringify({ error: { code: 429, message, details: retry ? [{ retryDelay: retry }] : [] } }), { status: 429 });
+  const replies = [
+    limit("Rate limit exceeded (limit: 3 requests per minute on Free Tier).", "0.1s"),
+    limit("Rate limit exceeded (limit: 3 requests per minute on Free Tier). Please retry in 0.2s"),  // the wait only in the message
+    new Response(JSON.stringify({ steps: [{ type: "model_output", content: [{ type: "audio", data: audio }] }] })),
+    limit("Quota exceeded (limit: 10 requests per day on Free Tier)."),
+  ];
   const sent: { url: string; key: string; body: any }[] = [];
   const real = globalThis.fetch, keys = { g: process.env.GEMINI_API_KEY, o: process.env.OPENROUTER_API_KEY };
   globalThis.fetch = (async (url: string, init: RequestInit) => {
@@ -243,14 +248,14 @@ test("voice: Google's Gemini API speaks a clip, waits out a per-minute limit, an
     process.env.GEMINI_API_KEY = "g"; process.env.OPENROUTER_API_KEY = "o";
     assert.deepEqual(voiceAccess(), { via: "google", key: "g" });  // Google's key wins when both are set
     const r = await speakAll(["Hello there."], { backend: "gemini", via: "google", key: "g", cacheDir: dir });
-    assert.equal(sent.length, 2);
-    assert.match(sent[1].url, /generativelanguage\.googleapis\.com\/v1beta\/interactions$/);
-    assert.equal(sent[1].key, "g");
-    assert.equal(sent[1].body.model, "gemini-3.8-flash-tts");
-    assert.deepEqual(sent[1].body.generation_config.speech_config, [{ voice: "Charon" }]);
-    assert.equal(sent[1].body.input[0].content[0].text, "Hello there.");
+    assert.equal(sent.length, 3);
+    assert.match(sent[2].url, /generativelanguage\.googleapis\.com\/v1beta\/interactions$/);
+    assert.equal(sent[2].key, "g");
+    assert.equal(sent[2].body.model, "gemini-3.8-flash-tts");
+    assert.deepEqual(sent[2].body.generation_config.speech_config, [{ voice: "Charon" }]);
+    assert.equal(sent[2].body.input[0].content[0].text, "Hello there.");
     assert.ok(r.durations[0] > 0.3 && r.durations[0] < 0.6);
-    await assert.rejects(speakAll(["Another line."], { backend: "gemini", via: "google", key: "g", cacheDir: dir }), /limit for the voice is spent: Quota exceeded/);
+    await assert.rejects(speakAll(["Another line."], { backend: "gemini", via: "google", key: "g", cacheDir: dir }), /limit for the voice is spent: Quota exceeded \(limit: 10 requests per day/);
   } finally {
     globalThis.fetch = real;
     for (const [k, v] of [["GEMINI_API_KEY", keys.g], ["OPENROUTER_API_KEY", keys.o]] as const) if (v === undefined) delete process.env[k]; else process.env[k] = v;

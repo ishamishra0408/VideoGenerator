@@ -31,6 +31,15 @@ export function voiceAccess(): { via: Via; key: string } {
   throw new Error("The voice needs GEMINI_API_KEY (from Google AI Studio) or OPENROUTER_API_KEY. Put one in .env (see .env.example).");
 }
 
+/** Google's free tier counts requests a minute across the key (3 for this model), so one 429 pauses every clip, not just its own. */
+let googlePausedUntil = 0;
+
+/** How long Google says to wait, from its RetryInfo or its message ("Please retry in 1s"). */
+function retryIn(body: string): number | undefined {
+  const s = /"retryDelay":\s*"(\d+(?:\.\d+)?)s"/.exec(body)?.[1] ?? /retry in (\d+(?:\.\d+)?)\s*s/i.exec(body)?.[1];
+  return s === undefined ? undefined : Number(s);
+}
+
 /** One clip from Google's Gemini API: WAV by default, raw PCM if Google ever sends that instead. */
 async function google(text: string, key: string): Promise<{ audio: Buffer }> {
   const body = JSON.stringify({
@@ -40,6 +49,7 @@ async function google(text: string, key: string): Promise<{ audio: Buffer }> {
     generation_config: { speech_config: [{ voice: VOICE.name }] },
   });
   for (let attempt = 0; ; attempt++) {
+    if (googlePausedUntil > Date.now()) await sleep(googlePausedUntil - Date.now());
     const res = await fetch(INTERACTIONS, {
       method: "POST",
       headers: { "x-goog-api-key": key, "content-type": "application/json" },
@@ -53,9 +63,11 @@ async function google(text: string, key: string): Promise<{ audio: Buffer }> {
       throw new Error("Google's voice answered without audio.");
     }
     const err = await res.text();
-    // the free tier's per-minute limit says how long to wait; a spent daily limit doesn't, and waiting won't help
-    const wait = Number(/"retryDelay":\s*"(\d+(?:\.\d+)?)s"/.exec(err)?.[1]);
-    if (res.status === 429 && wait > 0 && wait <= 90 && attempt < 6) { await sleep(wait * 1000 + 500); continue; }
+    // a per-minute limit is waited out, however many rounds it takes; a spent daily limit won't come back for hours
+    if (res.status === 429 && !/per day/i.test(err) && attempt < 40) {
+      googlePausedUntil = Math.max(googlePausedUntil, Date.now() + Math.min(retryIn(err) ?? 20, 90) * 1000 + 1000);
+      continue;
+    }
     if (res.status === 429) throw new Error(`Google's limit for the voice is spent: ${message(err)} Finished clips are cached, so run again later, or turn on billing for the key in Google AI Studio.`);
     if ((res.status === 400 && /API key/i.test(err)) || res.status === 401 || res.status === 403) throw new Error(`Google rejected GEMINI_API_KEY (${res.status}): ${message(err)}`);
     if ((res.status === 0 || res.status >= 500) && attempt < 4) { await sleep(1500 * 2 ** attempt); continue; }
