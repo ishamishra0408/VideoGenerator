@@ -111,7 +111,7 @@ While the Google app is in **Testing**, only the accounts listed as test users (
 
 1. **Read.** GitHub's API (or the folder) gives the file tree, the README, the manifests, entry points and a few key source files: about 48,000 characters of README and files, plus a trimmed file tree.
 2. **Storyboard.** Claude, through the Claude API, splits the film into beats and scenes, writes the narration to the word budget, and picks what each scene shows. The result is checked before it's used: the word count, the number of chapters, code that has to be copied from the repo rather than invented, and file paths that have to exist. Problems go back to the writer for up to two more rounds. With your own script, the writer only places your sentences into scenes, and can't change them.
-3. **Voice.** One clip per sentence, trimmed of silence and cached by what was said, four at a time.
+3. **Voice.** One clip per sentence, trimmed of silence and cached by what was said, four at a time. From Google's Gemini API, whose free tier allows 10 requests a day, a chapter's sentences (up to 10) are spoken in one request with a long pause between them and cut back into clips at those pauses, so a 2-minute film takes about 5 requests; a chapter whose pauses don't line up with its sentences is spoken a sentence at a time instead.
 4. **Sound.** The clips are laid on a clock with pauses between sentences, scenes and chapters. A whoosh at each scene change, a stamp on before-and-after cards, and soft pops and ticks are synthesised and mixed underneath.
 5. **Film.** The stage is a single web page that can draw any moment on demand. Headless Chrome seeks it frame by frame, ffmpeg encodes the frames, and the soundtrack is levelled to -16 LUFS.
 

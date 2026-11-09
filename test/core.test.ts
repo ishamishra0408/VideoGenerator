@@ -262,6 +262,57 @@ test("voice: Google's Gemini API speaks a clip, waits out its per-minute limit, 
   }
 });
 
+/** Synthetic narration at 24 kHz: each sentence a tone as long as it would take to read (with a short breath inside), a long pause between. */
+function narration(texts: string[], pause = 0.9): { samples: Float32Array; ends: number[] } {
+  const sr = 24_000, parts: number[] = [], ends: number[] = [];
+  texts.forEach((t, k) => {
+    if (k) for (let i = 0; i < pause * sr; i++) parts.push(0);
+    const n = Math.round((t.length / 14) * sr);
+    for (let i = 0; i < n; i++) parts.push(Math.abs(i - n / 2) < 0.075 * sr ? 0 : 0.3 * Math.sin(i / 8));
+    ends.push(parts.length);
+  });
+  return { samples: Float32Array.from(parts), ends };
+}
+
+test("voice: one recording of a chapter is cut at its long pauses, and refused when they don't match the sentences", async () => {
+  const { splitAtPauses } = await import("../src/voice.ts");
+  const texts = ["Every production bug asks three questions.", "What broke.", "Why it shipped, and what stops it next time."];
+  const { samples, ends } = narration(texts);
+  const cuts = splitAtPauses(samples, 24_000, texts)!;
+  assert.equal(cuts.length, 2);
+  cuts.forEach((c, k) => assert.ok(c > ends[k] && c < ends[k] + 0.9 * 24_000, `cut ${k} falls in the pause after sentence ${k}`));
+  // two sentences of very different lengths, but a recording split evenly: a pause was missed somewhere
+  const even = narration(["A sentence of middling length here.", "A sentence of middling length here."]).samples;
+  assert.equal(splitAtPauses(even, 24_000, ["Hi.", "A much longer sentence that should have taken far more time to say aloud."]), null);
+  assert.equal(splitAtPauses(narration(["One long sentence without any pause."]).samples, 24_000, ["One.", "Two.", "Three."]), null);
+});
+
+test("voice: Google speaks a chapter in one request and caches a clip per sentence", async () => {
+  const { speakAll } = await import("../src/voice.ts");
+  const dir = mkdtempSync(join(tmpdir(), "vg-chapter-"));
+  const lines = ["Every production bug asks three questions.", "What broke.", "Why it shipped, and what stops it next time.", "A new chapter starts here."];
+  const take = (texts: string[]) => {
+    const f = join(dir, `take-${texts.length}.wav`);
+    writeWav(f, narration(texts).samples, 24_000);
+    return new Response(JSON.stringify({ steps: [{ type: "model_output", content: [{ type: "audio", data: readFileSync(f).toString("base64") }] }] }));
+  };
+  const sent: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    const text: string = JSON.parse(String(init.body)).input[0].content[0].text;
+    sent.push(text);
+    return take(text.split(" <long pause> "));
+  }) as typeof fetch;
+  try {
+    const r = await speakAll(lines, { backend: "gemini", via: "google", key: "g", chapters: [0, 0, 0, 1], cacheDir: dir });
+    assert.deepEqual(sent, [lines.slice(0, 3).join(" <long pause> "), lines[3]]);  // two requests for four sentences
+    assert.equal(r.fresh.length, 4);
+    r.durations.forEach((d, k) => assert.ok(Math.abs(d - lines[k].length / 14) < 0.35, `clip ${k} lasts about as long as its sentence (${d.toFixed(2)} s)`));
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test("color: the formats themes use parse to the same colour", async () => {
   const { parseColor, hex, contrast } = await import("../src/color.ts");
   assert.equal(hex(parseColor("#fff")!), "#ffffff");

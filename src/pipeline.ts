@@ -9,7 +9,7 @@ import { mix, writeWav } from "./audio.ts";
 import { requireKey } from "./env.ts";
 import { loadRepo } from "./github.ts";
 import { chat } from "./llm.ts";
-import { makePlan, planLines, planWords, validatePlanShape, type Plan } from "./plan.ts";
+import { makePlan, planChapters, planLines, planWords, validatePlanShape, type Plan } from "./plan.ts";
 import { buildStage, renderStills, renderVideo } from "./render.ts";
 import { countWords, parseScript } from "./sentences.ts";
 import { layout, toSrt } from "./timing.ts";
@@ -143,7 +143,7 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
     const lines = planLines(plan);
     const access = backend === "gemini" ? voiceAccess() : undefined;
     report({ stage: "voice", message: access ? `Speaking ${lines.length} sentences (Gemini, Charon, from ${access.via === "google" ? "Google" : "OpenRouter"})` : `Speaking ${lines.length} sentences (say)`, fraction: 0 });
-    const voice = await speakAll(lines, { backend, key: access?.key, via: access?.via, cacheDir: resolve(CACHE_DIR) },
+    const voice = await speakAll(lines, { backend, key: access?.key, via: access?.via, chapters: planChapters(plan), cacheDir: resolve(CACHE_DIR) },
       (s) => report({ stage: "voice", message: s }), (c) => paidClips.push(c));
     report({ stage: "voice", message: `${voice.fresh.length} new clips, ${lines.length - voice.fresh.length} from the cache`, fraction: 1 });
     voiceSpend.cached = lines.length - voice.fresh.length;
