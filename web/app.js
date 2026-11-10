@@ -234,7 +234,8 @@
   function openFilm(r) {
     cost(r.cost);
     $("#yt").hidden = true;
-    S.youtube = r.youtube || null;
+    S.youtube = r.youtube || [];
+    Y.again = false;
     ytLink(S.youtube);
     var v = $("#player");
     v.textContent = "";
@@ -259,25 +260,39 @@
   });
 
   // ---------- YouTube ----------
-  var Y = { privacy: "private", status: null, posting: null };
-  /** Under the film, always: where it is on YouTube. */
-  function ytLink(v) {
+  // again: the film is already posted and the panel is open to post it to another channel
+  var Y = { privacy: "private", status: null, posting: null, again: false };
+  function link(text, href) { var a = el("a", null, text); a.href = href; a.target = "_blank"; a.rel = "noopener"; return a; }
+  /** Under the film, always: where it is on YouTube, one link for each channel it went to. */
+  function ytLink(posts) {
     var line = $("#f-ytlink");
     line.textContent = "";
-    line.hidden = !v;
-    if (!v) return;
-    var a = el("a", null, v.url.replace(/^https:\/\//, "")); a.href = v.url; a.target = "_blank"; a.rel = "noopener";
-    line.appendChild(document.createTextNode("On YouTube · ")); line.appendChild(a);
+    line.hidden = !posts.length;
+    if (!posts.length) return;
+    line.appendChild(document.createTextNode("On YouTube"));
+    posts.forEach(function (v) {
+      line.appendChild(document.createTextNode(" · "));
+      line.appendChild(link(v.url.replace(/^https:\/\//, ""), v.url));
+      if (v.channel) line.appendChild(document.createTextNode(" (" + v.channel + ")"));
+    });
   }
-  /** A posted film's panel collapses to one line: what happened, and where to see it. */
-  function postedLine(v) {
+  /** A posted film's panel collapses to a line per post, and a way to post it to another channel. */
+  function postedLine(posts) {
     var box = $("#yt-posted");
     box.textContent = "";
-    box.appendChild(document.createTextNode(v.privacy !== v.requested ? "Posted, but YouTube kept it private until this Google project passes its audit. " : "Posted. "));
-    var watch = el("a", null, "Watch"); watch.href = v.url; watch.target = "_blank"; watch.rel = "noopener";
-    var studio = el("a", null, "YouTube Studio"); studio.href = v.studio; studio.target = "_blank"; studio.rel = "noopener";
-    box.appendChild(watch); box.appendChild(document.createTextNode(" · ")); box.appendChild(studio);
+    posts.forEach(function (v) {
+      var row = el("div"), where = v.channel ? "On " + v.channel : "Posted";
+      row.appendChild(document.createTextNode(v.privacy !== v.requested
+        ? where + ", but YouTube kept it private until this Google project passes its audit. " : where + ". "));
+      row.appendChild(link("Watch", v.url)); row.appendChild(document.createTextNode(" · ")); row.appendChild(link("YouTube Studio", v.studio));
+      box.appendChild(row);
+    });
+    var again = el("button", "link plain", "Post to another channel");
+    again.type = "button";
+    again.addEventListener("click", function () { Y.again = true; ytShow(true); });
+    var row = el("div", "again"); row.appendChild(again); box.appendChild(row);
     box.hidden = false;
+    $("#yt-again").hidden = true;
     $("#yt-form").hidden = true;
     $("#yt").querySelector(".yt-connect").hidden = true;
     $("#yt").querySelector(".yt-off").hidden = true;
@@ -288,7 +303,8 @@
     box.hidden = !open;
     if (!open) return;
     $("#yt-posted").hidden = true;
-    if (S.youtube) return postedLine(S.youtube);
+    if (S.youtube.length && !Y.again) return postedLine(S.youtube);
+    $("#yt-again").hidden = !S.youtube.length;
     // every film starts Private; a post in flight keeps its bar on its own film only
     Y.privacy = "private"; pick("yt-privacy", "private");
     var mine = Y.posting === S.dir;
@@ -309,9 +325,11 @@
       });
     });
   }
-  $("#f-yt").addEventListener("click", function () { ytShow($("#yt").hidden); });
-  // Google sends the browser back to the front page: remember which film to come back to
-  $("#yt-connect").addEventListener("click", function () { try { localStorage.setItem("videogen-yt-film", S.dir || ""); } catch (e) {} });
+  $("#f-yt").addEventListener("click", function () { Y.again = false; ytShow($("#yt").hidden); });
+  // Google sends the browser back to the front page: remember which film to come back to, and whether it was a second post
+  $("#yt-connect").addEventListener("click", function () {
+    try { localStorage.setItem("videogen-yt-film", S.dir || ""); localStorage.setItem("videogen-yt-again", Y.again ? "1" : ""); } catch (e) {}
+  });
   $("#yt-disconnect").addEventListener("click", function () {
     fetch("/api/youtube/disconnect", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).then(function () { ytShow(true); });
   });
@@ -341,8 +359,8 @@
         });
       })
       .then(function (v) {
-        if (S.dir === film) { S.youtube = v; ytLink(v); }
-        if (here()) postedLine(v);
+        if (S.dir === film) { S.youtube = S.youtube.concat([v]); Y.again = false; ytLink(S.youtube); }
+        if (here()) postedLine(S.youtube);
         library();
       }, function (err) { if (!here()) return; done.textContent = err.message; done.classList.add("err"); done.hidden = false; })
       .then(function () { Y.posting = null; post.disabled = false; bar.hidden = true; status.hidden = true; });
@@ -388,11 +406,15 @@
       failed: "The YouTube sign-in didn't finish. Try again." };
     if (y === "off") error("YouTube isn't set up on this server.");
     if (y === "error") error(WHY[q.get("code")] || WHY.failed);
-    var film = ""; try { film = localStorage.getItem("videogen-yt-film") || ""; localStorage.removeItem("videogen-yt-film"); } catch (e) {}
+    var film = "", again = false;
+    try {
+      film = localStorage.getItem("videogen-yt-film") || ""; again = localStorage.getItem("videogen-yt-again") === "1";
+      localStorage.removeItem("videogen-yt-film"); localStorage.removeItem("videogen-yt-again");
+    } catch (e) {}
     if (!film) return;
     fetch("/api/library").then(function (r) { return r.json(); }).then(function (list) {
       var f = list.filter(function (x) { return x.dir === film; })[0];
-      if (f) { openFilm(f); ytShow(true); }
+      if (f) { openFilm(f); Y.again = again; ytShow(true); }
     });
   })();
 })();

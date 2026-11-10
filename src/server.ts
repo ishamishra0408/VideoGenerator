@@ -9,7 +9,7 @@ import { money, readCost } from "./cost.ts";
 import { runJob, type Job, type JobResult, type Progress } from "./pipeline.ts";
 import { CACHE_DIR } from "./config.ts";
 import { listThemes, loadTheme, parseThemeSpec } from "./theme.ts";
-import { authUrl, disconnect, draft, finishSignIn, forBrowser, lastPost, recordPost, SignInError, uploadVideo, youtubeConfig, youtubeStatus, type Privacy, type YouTubeConfig } from "./youtube.ts";
+import { authUrl, disconnect, draft, filmPosts, finishSignIn, forBrowser, recordPost, SignInError, uploadVideo, youtubeConfig, youtubeStatus, type Privacy, type YouTubeConfig } from "./youtube.ts";
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
 const OUT = resolve("out");
@@ -113,7 +113,7 @@ function publicResult(r: JobResult) {
     video: r.video && videoUrl(r.video), captions: r.captions && fileUrl(r.captions), vtt: vtt && fileUrl(vtt),
     storyboard: fileUrl(join(r.dir, "storyboard.json")),
     cost: r.cost.line,
-    youtube: lastPost(r.dir),
+    youtube: filmPosts(r.dir),
   };
 }
 
@@ -183,7 +183,7 @@ function library() {
     return [{ dir: d.name, title, repo, duration, made: statSync(join(dir, video)).mtimeMs, video: videoUrl(join(dir, video)),
       vtt: srt ? fileUrl(join(dir, srt.replace(/\.srt$/, ".vtt"))) : undefined, captions: srt ? fileUrl(join(dir, srt)) : undefined,
       storyboard: fileUrl(join(dir, "storyboard.json")),
-      cost: spent ? `${spent.exact ? "" : "≈"}${money(spent.usd)} for this film` : undefined, youtube: lastPost(dir) }];
+      cost: spent ? `${spent.exact ? "" : "≈"}${money(spent.usd)} for this film` : undefined, youtube: filmPosts(dir) }];
   }).sort((a, b) => b.made - a.made);
 }
 

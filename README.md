@@ -40,7 +40,7 @@ Pick a theme under **Theme**: any 21st.dev community theme in its light or dark 
 
 ## Post to YouTube
 
-Under a finished film, **YouTube** opens a panel. Connect your Google account once, check the title and description (filled in from the storyboard, with chapters YouTube recognises), pick Private, Unlisted or Public, and post. The upload goes up in pieces and carries on if the connection drops. Once posted, the panel collapses to the links (the video and YouTube Studio), and the film shows its YouTube link under the video from then on (kept in the film's folder as `youtube.json`).
+Under a finished film, **YouTube** opens a panel. Connect your Google account once, check the title and description (filled in from the storyboard, with chapters YouTube recognises), pick Private, Unlisted or Public, and post. The upload goes up in pieces and carries on if the connection drops. Once posted, the panel collapses to the links (the video and YouTube Studio), and the film shows its YouTube link under the video from then on (kept in the film's folder as `youtube.json`). **Post to another channel** opens the panel again: Disconnect, connect the other Google account (or pick the other channel when Google asks), and post. The film then lists a link for each channel it's on.
 
 One-time Google setup:
 

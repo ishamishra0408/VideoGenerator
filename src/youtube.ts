@@ -178,7 +178,11 @@ function explain(status: number, body: string): string {
   return `YouTube refused the upload (${status}${reason ? `, ${reason}` : ""})${message ? `: ${message.slice(0, 200)}` : "."}`;
 }
 
-export interface Posted { id: string; url: string; studio: string; privacy: string; requested: Privacy }
+export interface Posted {
+  id: string; url: string; studio: string; privacy: string; requested: Privacy;
+  /** The channel it went to, as YouTube names it, so a film posted to several channels can tell them apart. */
+  channel?: string;
+}
 
 /** Every post of a film is kept in its folder, so the film shows its YouTube link from then on. */
 export function recordPost(dir: string, posted: Posted, as?: string): void {
@@ -188,13 +192,15 @@ export function recordPost(dir: string, posted: Posted, as?: string): void {
   writeFileSync(file, JSON.stringify({ posts: [...posts, { ...posted, as, at: new Date().toISOString() }] }, null, 2));
 }
 
-/** The film's latest post, if it has one. */
-export function lastPost(dir: string): (Posted & { at?: string }) | null {
-  try {
-    const posts = JSON.parse(readFileSync(join(dir, "youtube.json"), "utf8")).posts;
-    const p = Array.isArray(posts) ? posts[posts.length - 1] : null;
-    return p && /^[\w-]{6,20}$/.test(p.id) ? { id: p.id, url: `https://youtu.be/${p.id}`, studio: `https://studio.youtube.com/video/${p.id}/edit`, privacy: String(p.privacy), requested: p.requested, at: p.at } : null;
-  } catch { return null; }
+/** Every post of the film, oldest first: one for each channel it went to. */
+export function filmPosts(dir: string): (Posted & { at?: string })[] {
+  let posts: unknown;
+  try { posts = JSON.parse(readFileSync(join(dir, "youtube.json"), "utf8")).posts; } catch { return []; }
+  if (!Array.isArray(posts)) return [];
+  return posts.filter((p) => p && /^[\w-]{6,20}$/.test(p.id)).map((p) => ({
+    id: p.id, url: `https://youtu.be/${p.id}`, studio: `https://studio.youtube.com/video/${p.id}/edit`,
+    privacy: String(p.privacy), requested: p.requested, channel: typeof p.channel === "string" && p.channel ? p.channel : undefined, at: p.at,
+  }));
 }
 
 /** Uploads the film in resumable 8 MB pieces, reporting progress from 0 to 1. A dropped piece is resumed, not restarted. */
@@ -216,7 +222,8 @@ export async function uploadVideo(cfg: YouTubeConfig, file: string, meta: { titl
   const session = init.headers.get("location");
   if (!session) throw new Error("YouTube didn't open an upload session.");
 
-  const posted = (v: any): Posted => ({ id: v.id, url: `https://youtu.be/${v.id}`, studio: `https://studio.youtube.com/video/${v.id}/edit`, privacy: v.status?.privacyStatus ?? meta.privacy, requested: meta.privacy });
+  const posted = (v: any): Posted => ({ id: v.id, url: `https://youtu.be/${v.id}`, studio: `https://studio.youtube.com/video/${v.id}/edit`, privacy: v.status?.privacyStatus ?? meta.privacy, requested: meta.privacy,
+    channel: typeof v.snippet?.channelTitle === "string" && v.snippet.channelTitle ? v.snippet.channelTitle : undefined });
   const received = (r: Response) => { const range = r.headers.get("range"); return range ? Number(range.split("-")[1]) + 1 : 0; };
   let refreshed = false;
   const fd = openSync(file, "r");

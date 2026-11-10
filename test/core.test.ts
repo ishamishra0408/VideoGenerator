@@ -476,13 +476,14 @@ test("youtube: every browser has its own connection", async () => {
 });
 
 test("youtube: a film remembers where it was posted", async () => {
-  const { recordPost, lastPost } = await import("../src/youtube.ts");
+  const { recordPost, filmPosts } = await import("../src/youtube.ts");
   const dir = mkdtempSync(join(tmpdir(), "vg-post-"));
-  assert.equal(lastPost(dir), null);
+  assert.deepEqual(filmPosts(dir), []);
+  // posted to one channel, then to another: both are kept, oldest first, each with its channel when YouTube named it
   recordPost(dir, { id: "abc123def45", url: "", studio: "", privacy: "unlisted", requested: "unlisted" }, "me@example.com");
-  recordPost(dir, { id: "zzz999yyy88", url: "", studio: "", privacy: "private", requested: "public" });
-  const p = lastPost(dir)!;
-  assert.equal(p.url, "https://youtu.be/zzz999yyy88");
-  assert.equal(p.studio, "https://studio.youtube.com/video/zzz999yyy88/edit");
+  recordPost(dir, { id: "zzz999yyy88", url: "", studio: "", privacy: "private", requested: "public", channel: "Second Channel" });
+  const posts = filmPosts(dir);
+  assert.deepEqual(posts.map((p) => [p.url, p.channel]), [["https://youtu.be/abc123def45", undefined], ["https://youtu.be/zzz999yyy88", "Second Channel"]]);
+  assert.equal(posts[1].studio, "https://studio.youtube.com/video/zzz999yyy88/edit");
   assert.equal(JSON.parse(readFileSync(join(dir, "youtube.json"), "utf8")).posts.length, 2);
 });
