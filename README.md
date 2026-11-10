@@ -68,7 +68,7 @@ While the Google app is in **Testing**, only the accounts listed as test users (
 - `OPENROUTER_API_KEY`: pays for the storyboard and the voice.
 - `VIDEOGEN_PASSWORD`: 8 or more characters. The site opens on a sign-in page that asks for it, because every film spends the key's credit, and remembers the browser for 30 days (changing the password signs everyone out). Scripts can send it as Basic auth. The server won't start without it when it listens beyond the machine it runs on.
 
-`GITHUB_TOKEN` is optional, as above. The blueprint uses the free plan, which is small (512 MB, a tenth of a CPU) and sleeps when idle, so films render at 720p in one Chrome tab with a faster encoder, and the page pings the server while a film renders so it stays awake. Nothing is kept across restarts or deploys: download each film when it's done. On a bigger plan, raise `VIDEOGEN_SCALE` to `1` (1080p), `VIDEOGEN_WORKERS` and `VIDEOGEN_PRESET`.
+`GITHUB_TOKEN` is optional, as above. The blueprint uses the free plan, which is small (512 MB, a tenth of a CPU) and sleeps when idle, so films render at 720p in one headless Chrome with a faster encoder, and the page pings the server while a film renders so it stays awake. Nothing is kept across restarts or deploys: download each film when it's done. On a bigger plan, raise `VIDEOGEN_SCALE` to `1` (1080p), `VIDEOGEN_WORKERS` and `VIDEOGEN_PRESET`.
 
 | Variable | Default | |
 |---|---|---|
@@ -76,7 +76,7 @@ While the Google app is in **Testing**, only the accounts listed as test users (
 | `VIDEOGEN_PASSWORD` | none | Required unless `HOST` is local |
 | `ALLOWED_HOSTS` | Render's own hostname | Extra host names to accept, comma-separated |
 | `VIDEOGEN_SCALE` | `1` | `0.6667` films at 720p, `0.5` at 540p |
-| `VIDEOGEN_WORKERS` | up to 4 | Chrome tabs filming in parallel |
+| `VIDEOGEN_WORKERS` | up to 4 | Headless Chromes filming in parallel |
 | `VIDEOGEN_PRESET` | `medium` | x264 preset, e.g. `veryfast` |
 | `VIDEOGEN_FPS` | `25` | Frames a second |
 | `CHROME_PATH`, `FFMPEG_PATH` | found on the system | |
@@ -90,7 +90,7 @@ While the Google app is in **Testing**, only the accounts listed as test users (
 |---|---|
 | `--repo` | `owner/name`, a GitHub URL, or a folder on disk |
 | `--minutes 1\|2\|3\|4` | The length (default 2). It sets the word budget at 146 words a minute, measured on Charon. |
-| `--script <file>` | Your narration, kept word for word. Each paragraph or list item is spoken as its own sentence, and Markdown headings hint where chapters go. With a script, your words set the length, so a long script makes a film longer than 4 minutes. |
+| `--script <file>` | Your narration, kept word for word. Each paragraph or list item is spoken as its own sentence, and Markdown headings hint where chapters go. A shooting script works too: timecode lines such as `0:20–0:55 — Run 1` hint at chapters, `[On screen: …]` notes tell the writer what to show and aren't spoken, and when most of the narration is in quote marks only the quoted words are spoken (a title or running time outside them is left out, with a note saying so). With a script, your words set the length, not its timecodes, so a long script makes a film longer than 4 minutes. |
 | `--adapt` | Fit `--script` to `--minutes` instead of keeping every word |
 | `--brief <text>` | Direction for the writer, such as "for a hiring manager" |
 | `--theme <name\|link>` | A 21st.dev community theme by name (`vintage-paper`) or link. |
@@ -100,7 +100,7 @@ While the Google app is in **Testing**, only the accounts listed as test users (
 | `--storyboard-only` | Stop after `storyboard.json`, to edit it by hand |
 | `--from <file>` | Film an existing `storyboard.json` |
 | `--stills 5,12.5,40` | PNG stills at those seconds instead of the film |
-| `--out`, `--fps`, `--workers` | Output folder, frame rate (25), Chrome tabs filming in parallel (default up to 4, at most 8) |
+| `--out`, `--fps`, `--workers` | Output folder, frame rate (25), headless Chromes filming in parallel (default up to 4, at most 8) |
 | `--env <file>` | Read keys from another `.env` file |
 
 `GITHUB_TOKEN` in `.env` is optional. It raises GitHub's limit from 60 to 5,000 requests an hour and lets it read private repos you can access.

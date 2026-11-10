@@ -9,7 +9,7 @@ import { mix, writeWav } from "./audio.ts";
 import { requireKey } from "./env.ts";
 import { loadRepo } from "./github.ts";
 import { chat } from "./llm.ts";
-import { makePlan, planLines, planWords, validatePlanShape, type Plan } from "./plan.ts";
+import { makePlan, planLines, planWords, validatePlanShape, type Plan, type PlanRequest } from "./plan.ts";
 import { buildStage, renderStills, renderVideo } from "./render.ts";
 import { countWords, parseScript } from "./sentences.ts";
 import { layout, toSrt } from "./timing.ts";
@@ -97,11 +97,19 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
       const context = await loadRepo(job.repo);
       report({ stage: "repo", message: `${context.paths.length} files, ${context.files.length} read closely` });
 
-      let script: string[] | undefined, scriptHeadings: string[] | undefined;
+      let script: string[] | undefined, scriptHeadings: string[] | undefined, scriptNotes: PlanRequest["scriptNotes"];
       if (job.script?.trim() && !job.adapt) {
-        const sections = parseScript(job.script);
+        const { sections, unspoken } = parseScript(job.script);
         script = sections.flatMap((s) => s.sentences);
         scriptHeadings = sections.map((s) => s.title).filter((t): t is string => !!t);
+        let at = 0;
+        scriptNotes = sections.flatMap((s) => {
+          const from = at;
+          at += s.sentences.length;
+          return s.onScreen.length ? [{ from, to: at - 1, heading: s.title, notes: s.onScreen }] : [];
+        });
+        if (unspoken.length)
+          warnings.push(`Not spoken, since the narration is in quotes and these lines aren't: ${unspoken.map((l) => `"${l.length > 60 ? l.slice(0, 57) + "..." : l}"`).join("; ")}.`);
         const words = script.reduce((a, s) => a + countWords(s), 0);
         const est = words / WPM;
         if (job.minutes && Math.abs(est - job.minutes) > 0.35)
@@ -112,7 +120,7 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
       const model = job.model || DEFAULT_MODEL;
       report({ stage: "storyboard", message: `Writing the storyboard with ${model}` });
       const res = await makePlan(
-        { context, minutes, script, scriptHeadings, adapt: job.adapt ? job.script : undefined, brief: job.brief },
+        { context, minutes, script, scriptHeadings, scriptNotes, adapt: job.adapt ? job.script : undefined, brief: job.brief },
         async (system, messages) => {
           const { text, usage } = await chat({ key, model, system, messages });
           const exact = usage.cost !== undefined;
@@ -171,7 +179,7 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
     const workers = job.workers ?? RENDER.workers ?? Math.max(1, Math.min(4, Math.floor(cpus().length / 2)));
     const video = join(dir, `${base}-${Math.max(1, Math.round(timing.duration / 60))}min.mp4`);
     const t0 = Date.now();
-    report({ stage: "render", message: `Filming ${Math.ceil(timing.duration * fps)} frames in ${workers} tabs`, fraction: 0 });
+    report({ stage: "render", message: `Filming ${Math.ceil(timing.duration * fps)} frames in ${workers} ${workers === 1 ? "browser" : "browsers"}`, fraction: 0 });
     await renderVideo({
       stageFile, audio: soundtrack, out: video, duration: timing.duration, fps, workers,
       onProgress: (done, total) => {

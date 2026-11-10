@@ -25,7 +25,7 @@ const HELP = `videogen: turn a repo into a 1 to 4 minute narrated explainer film
   --stills <t,t,...>    PNG stills at those seconds instead of the film
   --out <dir>           output folder (default out/<name>-<n>min)
   --fps <n>             frames a second (default 25)
-  --workers <n>         Chrome tabs filming in parallel, 1 to 8 (default up to 4)
+  --workers <n>         headless Chromes filming in parallel, 1 to 8 (default up to 4)
   --env <file>          read keys from this .env file (default ./.env); repeat for more, first wins
 `;
 

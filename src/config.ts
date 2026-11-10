@@ -39,7 +39,7 @@ export const SAY = { voice: "Samantha", rate: "178" } as const;
 export const SAMPLE_RATE = 48_000;
 const envNum = (k: string, lo: number, hi: number) => { const n = Number(process.env[k]); return Number.isFinite(n) && n >= lo && n <= hi ? n : undefined; };
 export const FPS = envNum("VIDEOGEN_FPS", 1, 60) ?? 25;
-/** For small servers: render below 1080p (0.6667 = 720p), in fewer Chrome tabs, with a faster x264 preset. */
+/** For small servers: render below 1080p (0.6667 = 720p), in fewer headless Chromes, with a faster x264 preset. */
 export const RENDER = {
   scale: envNum("VIDEOGEN_SCALE", 0.25, 1) ?? 1,
   workers: envNum("VIDEOGEN_WORKERS", 1, 8),

@@ -8,7 +8,7 @@ import { GAPS } from "../src/config.ts";
 import { computeCues, itemTimes, sfxEvents } from "../src/cues.ts";
 import { parseRepo, pickFiles, type RepoContext } from "../src/github.ts";
 import { extractJson } from "../src/llm.ts";
-import { checkPlan, cleanLine, codeOverlap, makePlan, redistribute, validatePlanShape, type Plan, type Scene } from "../src/plan.ts";
+import { buildPrompt, checkPlan, cleanLine, codeOverlap, makePlan, redistribute, validatePlanShape, type Plan, type Scene } from "../src/plan.ts";
 import { parseScript, splitSentences, stripMarkdown } from "../src/sentences.ts";
 import { captionChunks, layout, toSrt } from "../src/timing.ts";
 
@@ -37,9 +37,47 @@ test("sentences: a script's words survive, and bullets stand alone", () => {
 });
 
 test("sentences: script headings become sections, words kept", () => {
-  const s = parseScript("# Intro\nHello there. This is it.\n\n# Close\nBye now.");
+  const { sections: s, unspoken } = parseScript("# Intro\nHello there. This is it.\n\n# Close\nBye now.");
   assert.deepEqual(s.map((x) => x.title), ["Intro", "Close"]);
   assert.deepEqual(s[0].sentences, ["Hello there.", "This is it."]);
+  assert.deepEqual(unspoken, []);
+});
+
+test("sentences: a timecoded script speaks only its quoted narration", () => {
+  const { sections, unspoken } = parseScript([
+    "Widget — 2-minute demo script (v2)",
+    "Total: 2:00 · One flow, one fix",
+    "0:00–0:20 — Stakes (Screen 1: Stakes)",
+    '"Sam asks the agent to send the invoice. The agent hands it to a helper.',
+    'The helper is about to get it wrong."',
+    "[On screen: invoice table, Globex on top.]",
+    "0:20–0:55 — Run 1, no receipt (Screen 2)",
+    '"Run 1. It clicks "Send" and two emails go out."',
+    '[On screen: click "Run". Banner: SENT.',
+    "Gmail: 2 sends.]",
+  ].join("\n"));
+  assert.deepEqual(sections.map((s) => s.title), ["Stakes", "Run 1, no receipt"]);
+  assert.deepEqual(sections[0].sentences, ["Sam asks the agent to send the invoice.", "The agent hands it to a helper.", "The helper is about to get it wrong."]);
+  assert.deepEqual(sections[1].sentences, ["Run 1.", 'It clicks "Send" and two emails go out.']);
+  assert.deepEqual(sections[0].onScreen, ["invoice table, Globex on top."]);
+  assert.deepEqual(sections[1].onScreen, ['click "Run". Banner: SENT. Gmail: 2 sends.']);
+  assert.deepEqual(unspoken, ["Widget — 2-minute demo script (v2)", "Total: 2:00 · One flow, one fix"]);
+});
+
+test("sentences: plain scripts keep every line", () => {
+  // a sentence that opens with a quote, a lone time, a Markdown link: all narration, nothing dropped
+  const { sections, unspoken } = parseScript('"Ship it," she said. Then we did.\n\n2:00 is when the job runs.\n\n[The docs](https://x.dev) explain the rest.');
+  assert.deepEqual(sections[0].sentences, ['"Ship it," she said.', "Then we did.", "2:00 is when the job runs.", "The docs explain the rest."]);
+  assert.deepEqual(unspoken, []);
+  // a timecode inside a Markdown heading is dropped from the title; a bracket line in code isn't a note
+  const md = parseScript("## 0:00–0:20 — Intro\nHello.\n```toml\n[package]\n```");
+  assert.deepEqual(md.sections.map((s) => [s.title, s.onScreen]), [["Intro", []]]);
+});
+
+test("plan: the script's on-screen notes reach the writer", () => {
+  const { user } = buildPrompt({ context: ctx, minutes: 1, script: ["One.", "Two.", "Three."], scriptNotes: [{ from: 0, to: 1, heading: "Stakes", notes: ["invoice table."] }] });
+  assert.match(user, /- sentences 0 to 1 \(Stakes\): invoice table\./);
+  assert.doesNotMatch(buildPrompt({ context: ctx, minutes: 1, script: ["One."] }).user, /author noted/);
 });
 
 test("timing: pauses between sentences, scenes and beats", () => {

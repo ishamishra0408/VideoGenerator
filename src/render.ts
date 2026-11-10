@@ -1,5 +1,5 @@
 // Filming the stage the way GitDiagram does: open it in headless Chrome, seek, screenshot, encode.
-// Frames are split across several tabs, each feeding its own ffmpeg; the pieces are joined with the soundtrack.
+// Frames are split across several headless Chromes, each feeding its own ffmpeg; the pieces are joined with the soundtrack.
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -88,10 +88,9 @@ async function launchChrome(): Promise<{ port: number; proc: ChildProcess; dir: 
   throw new Error("Chrome didn't start.");
 }
 
-async function openStage(port: number, file: string, fresh: boolean): Promise<Cdp> {
-  const target = fresh
-    ? await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" })).json()
-    : ((await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as any[]).find((t) => t.type === "page");
+/** The stage, loaded into the one tab Chrome started with. */
+async function openStage(port: number, file: string): Promise<Cdp> {
+  const target = ((await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()) as any[]).find((t) => t.type === "page");
   const cdp = await Cdp.connect(target.webSocketDebuggerUrl);
   // the stage is always laid out at 1920×1080; a smaller scale only shrinks the captured frames
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1920, height: 1080, deviceScaleFactor: RENDER.scale, mobile: false });
@@ -126,7 +125,7 @@ export async function renderStills(stageFile: string, times: number[], outDir: s
   mkdirSync(outDir, { recursive: true });
   const chrome = await launchChrome();
   try {
-    const cdp = await openStage(chrome.port, stageFile, false);
+    const cdp = await openStage(chrome.port, stageFile);
     const files: string[] = [];
     for (const t of times) {
       const f = join(outDir, `still-${t.toFixed(2)}.png`);
@@ -148,11 +147,14 @@ export async function renderVideo(o: FilmOptions): Promise<void> {
   const total = Math.ceil(o.duration * o.fps);
   const workers = Math.max(1, Math.min(o.workers, Math.ceil(total / 50)));
   const work = mkdtempSync(join(tmpdir(), "videogen-film-"));
-  const chrome = await launchChrome();
+  const chromes: Awaited<ReturnType<typeof launchChrome>>[] = [];
   const encoders: ChildProcess[] = [];
   let done = 0;
   try {
-    const tabs = await Promise.all(Array.from({ length: workers }, (_, w) => openStage(chrome.port, o.stageFile, w > 0)));
+    // A Chrome of its own per worker. Tabs sharing one Chrome sometimes screenshot each other's page
+    // (a film's first and last quarters came out swapped), so no two workers share a browser.
+    for (let w = 0; w < workers; w++) chromes.push(await launchChrome());
+    const tabs = await Promise.all(chromes.map((c) => openStage(c.port, o.stageFile)));
     const segs = tabs.map((_, w) => join(work, `seg${w}.mp4`));
     await Promise.all(tabs.map(async (cdp, w) => {
       const from = Math.floor((total * w) / workers), to = Math.floor((total * (w + 1)) / workers);
@@ -179,8 +181,8 @@ export async function renderVideo(o: FilmOptions): Promise<void> {
     await run(ff, ["-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", list, "-i", o.audio, "-map", "0:v", "-map", "1:a",
       "-c:v", "copy", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", o.out]);
   } finally {
-    for (const e of encoders) if (e.exitCode === null) e.kill("SIGKILL");  // a failed tab leaves its siblings' encoders waiting
-    await closeChrome(chrome);
+    for (const e of encoders) if (e.exitCode === null) e.kill("SIGKILL");  // a failed worker leaves its siblings' encoders waiting
+    await Promise.all(chromes.map(closeChrome));
     rmSync(work, { recursive: true, force: true });
   }
 }

@@ -25,6 +25,8 @@ export interface PlanRequest {
   script?: string[];
   /** Section headings from the user's script, as hints for where beats fall. */
   scriptHeadings?: string[];
+  /** The script's [On screen: …] notes, with the sentences they cover. */
+  scriptNotes?: { from: number; to: number; heading: string | null; notes: string[] }[];
   /** The user's script as raw text, to be tightened to the chosen length instead of kept verbatim. */
   adapt?: string;
   /** Extra direction for the writer, such as the audience. */
@@ -103,6 +105,11 @@ export function buildPrompt(req: PlanRequest): { system: string; user: string } 
         `Make about ${beats} beats and ${Math.max(scenes, Math.ceil(req.script.length / 3))} scenes, breaking where the script's topic changes.${hints} ` +
         `"on" indexes into the scene's own "lines" array. The visuals must show what those sentences say.`,
     );
+    if (req.scriptNotes?.length)
+      parts.push(
+        `The script's author noted what should be on screen. Use these notes to choose the scenes' kinds and items for the sentences they cover; what they describe may be shown even where the repository context doesn't mention it.\n` +
+          req.scriptNotes.map((n) => `- sentences ${n.from} to ${n.to}${n.heading ? ` (${n.heading})` : ""}: ${n.notes.join(" ")}`).join("\n"),
+      );
   } else {
     const budget = wordBudget(req.minutes);
     const lo = Math.round(budget * (1 - BUDGET_TOLERANCE)), hi = Math.round(budget * (1 + BUDGET_TOLERANCE));
