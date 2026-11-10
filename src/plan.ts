@@ -298,8 +298,6 @@ export function redistribute(scenes: Scene[], claimed: number[][], script: strin
 
 export const planWords = (p: Plan) => p.beats.flatMap((b) => b.scenes).reduce((a, s) => a + s.lines.reduce((x, l) => x + countWords(l), 0), 0);
 export const planLines = (p: Plan) => p.beats.flatMap((b) => b.scenes.flatMap((s) => s.lines));
-/** Each of planLines' lines' chapter (beat) index. */
-export const planChapters = (p: Plan) => p.beats.flatMap((b, i) => b.scenes.flatMap((s) => s.lines.map(() => i)));
 
 /** Writes, checks and repairs a storyboard: up to two rounds of feedback, then fixes what's left itself. */
 export async function makePlan(

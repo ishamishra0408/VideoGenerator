@@ -9,11 +9,11 @@ import { mix, writeWav } from "./audio.ts";
 import { requireKey } from "./env.ts";
 import { loadRepo } from "./github.ts";
 import { chat } from "./llm.ts";
-import { makePlan, planChapters, planLines, planWords, validatePlanShape, type Plan } from "./plan.ts";
+import { makePlan, planLines, planWords, validatePlanShape, type Plan } from "./plan.ts";
 import { buildStage, renderStills, renderVideo } from "./render.ts";
 import { countWords, parseScript } from "./sentences.ts";
 import { layout, toSrt } from "./timing.ts";
-import { speakAll, voiceAccess, voiceCost, type Backend, type FreshClip } from "./voice.ts";
+import { speakAll, voiceCost, type Backend, type FreshClip } from "./voice.ts";
 import { loadTheme, themeCss, type Mode } from "./theme.ts";
 
 export type Stage = "repo" | "storyboard" | "voice" | "sound" | "render" | "done" | "cost" | "upload" | "queued";
@@ -141,15 +141,14 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
 
     // the voice
     const lines = planLines(plan);
-    const access = backend === "gemini" ? voiceAccess() : undefined;
-    report({ stage: "voice", message: access ? `Speaking ${lines.length} sentences (Gemini, Charon, from ${access.via === "google" ? "Google" : "OpenRouter"})` : `Speaking ${lines.length} sentences (say)`, fraction: 0 });
-    const voice = await speakAll(lines, { backend, key: access?.key, via: access?.via, chapters: planChapters(plan), cacheDir: resolve(CACHE_DIR) },
+    report({ stage: "voice", message: backend === "gemini" ? `Speaking ${lines.length} sentences (Gemini, Charon)` : `Speaking ${lines.length} sentences (say)`, fraction: 0 });
+    const voice = await speakAll(lines, { backend, key: backend === "gemini" ? requireKey("OPENROUTER_API_KEY") : undefined, cacheDir: resolve(CACHE_DIR) },
       (s) => report({ stage: "voice", message: s }), (c) => paidClips.push(c));
     report({ stage: "voice", message: `${voice.fresh.length} new clips, ${lines.length - voice.fresh.length} from the cache`, fraction: 1 });
     voiceSpend.cached = lines.length - voice.fresh.length;
     voiceSpend.seconds = +voice.fresh.reduce((a, c) => a + c.seconds, 0).toFixed(2);
     // OpenRouter prices each clip a few seconds after the call: look them up while the film renders
-    priced = voiceCost(voice.fresh, backend, access?.via === "openrouter" ? access.key : undefined);
+    priced = voiceCost(voice.fresh, backend, backend === "gemini" ? requireKey("OPENROUTER_API_KEY") : undefined);
 
     // the clock, captions and soundtrack
     const timing = layout(plan, voice.durations);

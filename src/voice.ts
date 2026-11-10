@@ -1,21 +1,17 @@
-// The narrator: GitDiagram's Gemini Charon voice from Google's Gemini API or through OpenRouter, or macOS `say` offline.
+// The narrator: GitDiagram's Gemini Charon voice through OpenRouter, or macOS `say` offline.
 // One clip per sentence, trimmed of edge silence, cached by what was said and how.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SAMPLE_RATE, SAY, VOICE } from "./config.ts";
 import { addSpend, zero, type Spend } from "./cost.ts";
-import { readWav, wavDuration, writeWav } from "./audio.ts";
+import { wavDuration } from "./audio.ts";
 import { ffmpegPath, run } from "./proc.ts";
 
 export type Backend = "gemini" | "say";
-/** Where the Gemini voice comes from: Google's own API, or OpenRouter. The voice and the cached clips are the same. */
-export type Via = "google" | "openrouter";
-/** `chapters` gives each line's chapter (beat), so Google can speak a chapter's lines in one request. */
-export interface VoiceOptions { backend: Backend; key?: string; via?: Via; chapters?: number[]; cacheDir: string; concurrency?: number }
+export interface VoiceOptions { backend: Backend; key?: string; cacheDir: string; concurrency?: number }
 
 const SPEECH = "https://openrouter.ai/api/v1/audio/speech";
-const INTERACTIONS = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const TRIM = "silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_threshold=-50dB,areverse";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -24,62 +20,7 @@ export function clipKey(text: string, backend: Backend): string {
   return createHash("sha256").update(JSON.stringify([backend, ...how, text])).digest("hex").slice(0, 20);
 }
 
-/** The Gemini voice's key: Google's own when GEMINI_API_KEY is set, else OpenRouter's. */
-export function voiceAccess(): { via: Via; key: string } {
-  const google = process.env.GEMINI_API_KEY?.trim(), openrouter = process.env.OPENROUTER_API_KEY?.trim();
-  if (google) return { via: "google", key: google };
-  if (openrouter) return { via: "openrouter", key: openrouter };
-  throw new Error("The voice needs GEMINI_API_KEY (from Google AI Studio) or OPENROUTER_API_KEY. Put one in .env (see .env.example).");
-}
-
-/** Google's free tier counts requests a minute across the key (3 for this model), so one 429 pauses every clip, not just its own. */
-let googlePausedUntil = 0;
-
-/** How long Google says to wait, from its RetryInfo or its message ("Please retry in 1s"). */
-function retryIn(body: string): number | undefined {
-  const s = /"retryDelay":\s*"(\d+(?:\.\d+)?)s"/.exec(body)?.[1] ?? /retry in (\d+(?:\.\d+)?)\s*s/i.exec(body)?.[1];
-  return s === undefined ? undefined : Number(s);
-}
-
-/** One clip from Google's Gemini API: WAV by default, raw PCM if Google ever sends that instead. */
-async function google(text: string, key: string): Promise<{ audio: Buffer }> {
-  const body = JSON.stringify({
-    model: VOICE.googleModel,
-    input: [{ type: "user_input", content: [{ type: "text", text, annotations: [{ type: "speech_metadata", style: VOICE.style }] }] }],
-    response_format: { type: "audio" },
-    generation_config: { speech_config: [{ voice: VOICE.name }] },
-  });
-  for (let attempt = 0; ; attempt++) {
-    if (googlePausedUntil > Date.now()) await sleep(googlePausedUntil - Date.now());
-    const res = await fetch(INTERACTIONS, {
-      method: "POST",
-      headers: { "x-goog-api-key": key, "content-type": "application/json" },
-      body,
-      signal: AbortSignal.timeout(120_000),
-    }).catch((e) => ({ ok: false, status: 0, text: async () => String(e) }) as unknown as Response);
-    if (res.ok) {
-      const j = (await res.json()) as { steps?: { content?: { type?: string; data?: string }[] }[] };
-      const data = j.steps?.flatMap((s) => s.content ?? []).find((c) => c.type === "audio" && c.data)?.data;
-      if (data) return { audio: Buffer.from(data, "base64") };
-      throw new Error("Google's voice answered without audio.");
-    }
-    const err = await res.text();
-    // a per-minute limit is waited out, however many rounds it takes; a spent daily limit won't come back for hours
-    if (res.status === 429 && !/per day/i.test(err) && attempt < 40) {
-      googlePausedUntil = Math.max(googlePausedUntil, Date.now() + Math.min(retryIn(err) ?? 20, 90) * 1000 + 1000);
-      continue;
-    }
-    if (res.status === 429) throw new Error(`Google's limit for the voice is spent: ${message(err)} Finished clips are cached, so run again later, or turn on billing for the key in Google AI Studio.`);
-    if ((res.status === 400 && /API key/i.test(err)) || res.status === 401 || res.status === 403) throw new Error(`Google rejected GEMINI_API_KEY (${res.status}): ${message(err)}`);
-    if ((res.status === 0 || res.status >= 500) && attempt < 4) { await sleep(1500 * 2 ** attempt); continue; }
-    throw new Error(`The voice failed (${res.status}): ${message(err)}`);
-  }
-}
-
-/** Google's own wording from an error body, or the body itself. */
-const message = (body: string) => { try { return JSON.parse(body).error?.message ?? body.slice(0, 200); } catch { return body.slice(0, 200); } };
-
-async function openrouter(text: string, key: string): Promise<{ audio: Buffer; id?: string }> {
+async function gemini(text: string, key: string): Promise<{ audio: Buffer; id?: string }> {
   const body = JSON.stringify({
     model: VOICE.model,
     input: text,
@@ -95,15 +36,12 @@ async function openrouter(text: string, key: string): Promise<{ audio: Buffer; i
       signal: AbortSignal.timeout(120_000),
     }).catch((e) => ({ ok: false, status: 0, text: async () => String(e) }) as unknown as Response);
     if (res.ok) return { audio: Buffer.from(await res.arrayBuffer()), id: res.headers.get("x-generation-id") ?? undefined };
-    if (res.status === 402) throw new Error("OpenRouter says the balance is empty (402). Top it up, or set GEMINI_API_KEY to use Google's own Gemini API, then run again (finished clips are cached).");
+    if (res.status === 402) throw new Error("OpenRouter says the balance is empty (402). Top it up, then run again (finished clips are cached).");
     if (res.status === 401) throw new Error("OpenRouter rejected the key (401). Check OPENROUTER_API_KEY.");
     if ((res.status === 0 || res.status === 429 || res.status >= 500) && attempt < 4) { await sleep(1500 * 2 ** attempt); continue; }
     throw new Error(`The voice failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
   }
 }
-
-/** ffmpeg's input options for a take: OpenRouter sends bare PCM, Google a WAV. */
-const takeInput = (audio: Buffer) => (audio.subarray(0, 4).toString("latin1") === "RIFF" ? [] : ["-f", "s16le", "-ar", String(VOICE.pcmRate), "-ac", "1"]);
 
 /** Makes one clip; returns OpenRouter's generation id for a paid one, to price it afterwards. */
 async function makeClip(text: string, out: string, opts: VoiceOptions): Promise<string | undefined> {
@@ -111,10 +49,10 @@ async function makeClip(text: string, out: string, opts: VoiceOptions): Promise<
   const tmp = out + ".part", wav = out + ".tmp.wav";  // the cache only ever holds finished clips
   let id: string | undefined;
   if (opts.backend === "gemini") {
-    const take = opts.via === "google" ? await google(text, opts.key!) : await openrouter(text, opts.key!);
-    id = "id" in take ? take.id : undefined;
+    const take = await gemini(text, opts.key!);
+    id = take.id;
     writeFileSync(tmp, take.audio);
-    await run(ff, ["-loglevel", "error", "-y", ...takeInput(take.audio), "-i", tmp,
+    await run(ff, ["-loglevel", "error", "-y", "-f", "s16le", "-ar", String(VOICE.pcmRate), "-ac", "1", "-i", tmp,
       "-af", TRIM, "-ac", "1", "-ar", String(SAMPLE_RATE), "-sample_fmt", "s16", "-f", "wav", wav]);
   } else {
     if (process.platform !== "darwin") throw new Error("The offline voice uses macOS `say`. Use --voice gemini elsewhere.");
@@ -127,77 +65,6 @@ async function makeClip(text: string, out: string, opts: VoiceOptions): Promise<
   return id;
 }
 
-/** Where to cut one recording of several sentences: at its longest pauses, one fewer than the sentences. Null when the
- *  pieces' lengths don't follow the sentences' lengths (a pause missed or doubled), so they can be spoken one by one. */
-export function splitAtPauses(samples: Float32Array, rate: number, texts: string[]): number[] | null {
-  const n = texts.length, win = Math.round(rate * 0.01);
-  if (n < 2) return [];
-  const level: number[] = [];  // loudness in 10 ms steps
-  for (let i = 0; i + win <= samples.length; i += win) {
-    let e = 0;
-    for (let j = i; j < i + win; j++) e += samples[j] * samples[j];
-    level.push(Math.sqrt(e / win));
-  }
-  // quiet is relative to how loud the speech is, so a take with faint room tone still has pauses to find
-  const loud = [...level].sort((a, b) => a - b)[Math.floor(level.length * 0.95)] ?? 0;
-  const quiet = level.map((l) => l < Math.max(0.003, 0.08 * loud));
-  const first = quiet.indexOf(false), last = quiet.lastIndexOf(false);
-  if (first < 0) return null;
-  const gaps: { at: number; len: number }[] = [];
-  for (let i = first; i <= last; i++) {
-    if (!quiet[i]) continue;
-    const start = i;
-    while (i <= last && quiet[i]) i++;
-    gaps.push({ at: Math.round(((start + i) / 2) * win), len: i - start });
-  }
-  if (gaps.length < n - 1) return null;
-  const cuts = gaps.sort((a, b) => b.len - a.len).slice(0, n - 1).map((g) => g.at).sort((a, b) => a - b);
-  // each piece should last about as long as its sentence reads: its characters, plus its share of the pauses
-  const bounds = [first * win, ...cuts, (last + 1) * win], weight = texts.map((t) => t.length + 15);
-  const total = bounds[n] - bounds[0], sum = weight.reduce((a, b) => a + b, 0);
-  for (let k = 0; k < n; k++) {
-    const ratio = (bounds[k + 1] - bounds[k]) / total / (weight[k] / sum);
-    if (ratio < 0.4 || ratio > 2.5) return null;
-  }
-  return cuts;
-}
-
-/** Google's free tier allows 10 voice requests a day, so a chapter is spoken in one request, with a long pause between
- *  sentences, and cut back into one clip per sentence. False when the cuts can't be trusted: nothing is cached then. */
-async function speakTogether(texts: string[], outs: string[], opts: VoiceOptions): Promise<boolean> {
-  const ff = ffmpegPath();
-  const take = await google(texts.join(" <long pause> "), opts.key!);
-  const tmp = outs[0] + ".chapter", wav = tmp + ".wav";
-  writeFileSync(tmp, take.audio);
-  await run(ff, ["-loglevel", "error", "-y", ...takeInput(take.audio), "-i", tmp, "-ac", "1", "-ar", String(VOICE.pcmRate), "-sample_fmt", "s16", "-f", "wav", wav]);
-  const { rate, samples } = readWav(wav);
-  rmSync(tmp, { force: true });
-  rmSync(wav, { force: true });
-  const cuts = splitAtPauses(samples, rate, texts);
-  if (!cuts) return false;
-  const bounds = [0, ...cuts, samples.length];
-  for (let k = 0; k < texts.length; k++) {
-    const piece = outs[k] + ".piece.wav", clip = outs[k] + ".tmp.wav";
-    writeWav(piece, samples.subarray(bounds[k], bounds[k + 1]), rate);
-    await run(ff, ["-loglevel", "error", "-y", "-i", piece, "-af", TRIM, "-ac", "1", "-ar", String(SAMPLE_RATE), "-sample_fmt", "s16", "-f", "wav", clip]);
-    rmSync(piece, { force: true });
-    renameSync(clip, outs[k]);
-  }
-  return true;
-}
-
-/** The requests to make: one sentence each, or for Google a chapter's sentences together (at most 10, or 1,500 characters). */
-function batches(todo: number[], lines: string[], opts: VoiceOptions): number[][] {
-  if (opts.backend !== "gemini" || opts.via !== "google" || !opts.chapters) return todo.map((i) => [i]);
-  const out: number[][] = [];
-  for (const i of todo) {
-    const last = out[out.length - 1], chars = last ? last.reduce((a, j) => a + lines[j].length, 0) : 0;
-    if (last && opts.chapters[last[0]] === opts.chapters[i] && last.length < 10 && chars + lines[i].length <= 1500) last.push(i);
-    else out.push([i]);
-  }
-  return out;
-}
-
 export interface FreshClip { index: number; id?: string; seconds: number; text: string }
 
 /** Speaks every line. Returns each clip's file and length in seconds, in order, and which clips were new (paid for). */
@@ -205,31 +72,25 @@ export async function speakAll(lines: string[], opts: VoiceOptions, log: (s: str
   const dir = join(opts.cacheDir, "voice");
   mkdirSync(dir, { recursive: true });
   const files = lines.map((l) => join(dir, `${clipKey(l, opts.backend)}.wav`));
-  const queue = batches(lines.map((_, i) => i).filter((i) => !existsSync(files[i])), lines, opts);
+  const todo = lines.map((_, i) => i).filter((i) => !existsSync(files[i]));
   let done = 0;
   const ids = new Map<number, string | undefined>();
-  const made = (i: number, id?: string) => {
-    ids.set(i, id);
-    onFresh({ index: i, id, seconds: wavDuration(files[i]), text: lines[i] });  // paid for, even if a later clip fails
-    done++;
-    if (done % 5 === 0) log(`voice: ${done} new clips`);
-  };
   const worker = async () => {
-    for (let batch = queue.shift(); batch; batch = queue.shift()) {
-      if (batch.length > 1 && (await speakTogether(batch.map((i) => lines[i]), batch.map((i) => files[i]), opts))) { batch.forEach((i) => made(i)); continue; }
-      if (batch.length > 1) log("voice: a chapter didn't split cleanly at its pauses, so its sentences are spoken one by one");
-      for (const i of batch) made(i, await makeClip(lines[i], files[i], opts));
+    for (let i = todo.shift(); i !== undefined; i = todo.shift()) {
+      ids.set(i, await makeClip(lines[i], files[i], opts));
+      onFresh({ index: i, id: ids.get(i), seconds: wavDuration(files[i]), text: lines[i] });  // paid for, even if a later clip fails
+      done++;
+      if (done % 5 === 0) log(`voice: ${done} new clips`);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(opts.concurrency ?? 4, Math.max(1, queue.length)) }, worker));
+  await Promise.all(Array.from({ length: Math.min(opts.concurrency ?? 4, Math.max(1, todo.length)) }, worker));
   const durations = files.map(wavDuration);
   const fresh = [...ids.keys()].sort((a, b) => a - b).map((i) => ({ index: i, id: ids.get(i), seconds: durations[i], text: lines[i] }));
   return { files, durations, fresh };
 }
 
 /** What the new clips cost, from OpenRouter's generation records. They appear a few seconds after each call,
- *  so this waits and retries; a clip it still can't find, or one from Google (which reports no price, and costs
- *  nothing on its free tier), is priced from its length at the paid rate instead, marked approximate. */
+ *  so this waits and retries; a clip it still can't find is priced from its length instead, marked approximate. */
 export async function voiceCost(fresh: FreshClip[], backend: Backend, key?: string): Promise<Spend> {
   const spend = zero();
   if (backend !== "gemini") return spend;
