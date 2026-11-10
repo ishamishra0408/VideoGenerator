@@ -2,14 +2,15 @@
 
 Give it a GitHub repo, and optionally a script, and it makes a narrated explainer film of 1, 2, 3 or 4 minutes.
 
-No npm install. It's plain TypeScript that Node 22 runs directly, plus ffmpeg and Chrome.
+Plain TypeScript that Node 22 runs directly, with one npm package (Anthropic's SDK), plus ffmpeg and Chrome.
 
 ## Run it
 
-You need Node 22.18 or newer, ffmpeg, Google Chrome (or Chromium), and an [OpenRouter](https://openrouter.ai) key.
+You need Node 22.18 or newer, ffmpeg, Google Chrome (or Chromium), a [Claude API](https://console.anthropic.com) key for the storyboard and an [OpenRouter](https://openrouter.ai) key for the voice.
 
 ```bash
-cp .env.example .env        # then put your OPENROUTER_API_KEY in it
+npm install                 # Anthropic's SDK
+cp .env.example .env        # then put your ANTHROPIC_API_KEY and OPENROUTER_API_KEY in it
 npm run serve               # serves the web page at http://localhost:4319
 ```
 
@@ -63,12 +64,13 @@ While the Google app is in **Testing**, only the accounts listed as test users (
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ishamishra0408/VideoGenerator)
 
-`render.yaml` describes one Docker web service (Node 22, Chromium, ffmpeg). Render asks for two secrets when you create it:
+`render.yaml` describes one Docker web service (Node 22, Chromium, ffmpeg). Render asks for three secrets when you create it:
 
-- `OPENROUTER_API_KEY`: pays for the storyboard and the voice.
+- `ANTHROPIC_API_KEY`: pays for the storyboard (Claude).
+- `OPENROUTER_API_KEY`: pays for the voice (Gemini TTS).
 - `VIDEOGEN_PASSWORD`: 8 or more characters. The site opens on a sign-in page that asks for it, because every film spends the key's credit, and remembers the browser for 30 days (changing the password signs everyone out). Scripts can send it as Basic auth. The server won't start without it when it listens beyond the machine it runs on.
 
-`GITHUB_TOKEN` is optional, as above. The blueprint uses the free plan, which is small (512 MB, a tenth of a CPU) and sleeps when idle, so films render at 720p in one headless Chrome with a faster encoder, and the page pings the server while a film renders so it stays awake. Nothing is kept across restarts or deploys: download each film when it's done. On a bigger plan, raise `VIDEOGEN_SCALE` to `1` (1080p), `VIDEOGEN_WORKERS` and `VIDEOGEN_PRESET`.
+`GITHUB_TOKEN` is optional, as above, but set it on Render: without it GitHub allows 60 requests an hour per IP address, Render's free plan shares its address with other sites, and "Write storyboard" stops with "GitHub's rate limit is spent". Make a token at github.com/settings/personal-access-tokens (fine-grained, public repositories read-only is enough), then add it under the service's **Environment** tab and save, which redeploys. The blueprint uses the free plan, which is small (512 MB, a tenth of a CPU) and sleeps when idle, so films render at 720p in one headless Chrome with a faster encoder, and the page pings the server while a film renders so it stays awake. Filming costs about 85 ms of CPU a frame at 720p (3,000 frames for a 2-minute film), so on the free plan's tenth of a CPU a 2-minute film takes about 40 minutes to film, and on half a CPU about 8. Nothing is kept across restarts or deploys: download each film when it's done. On a bigger plan, raise `VIDEOGEN_SCALE` to `1` (1080p), `VIDEOGEN_WORKERS` and `VIDEOGEN_PRESET`.
 
 | Variable | Default | |
 |---|---|---|
@@ -96,7 +98,7 @@ While the Google app is in **Testing**, only the accounts listed as test users (
 | `--theme <name\|link>` | A 21st.dev community theme by name (`vintage-paper`) or link. |
 | `--mode light\|dark` | The theme's light or dark version (default light) |
 | `--voice gemini\|say` | Gemini 3.8 Flash TTS as Charon (default), or macOS `say` offline |
-| `--model <slug>` | The OpenRouter model that writes the storyboard (default `anthropic/claude-sonnet-5.5`) |
+| `--model <id>` | The Claude model that writes the storyboard (default `claude-opus-5-5`) |
 | `--storyboard-only` | Stop after `storyboard.json`, to edit it by hand |
 | `--from <file>` | Film an existing `storyboard.json` |
 | `--stills 5,12.5,40` | PNG stills at those seconds instead of the film |
@@ -108,7 +110,7 @@ While the Google app is in **Testing**, only the accounts listed as test users (
 ## How it works
 
 1. **Read.** GitHub's API (or the folder) gives the file tree, the README, the manifests, entry points and a few key source files: about 48,000 characters of README and files, plus a trimmed file tree.
-2. **Storyboard.** Claude, through OpenRouter, splits the film into beats and scenes, writes the narration to the word budget, and picks what each scene shows. The result is checked before it's used: the word count, the number of chapters, code that has to be copied from the repo rather than invented, and file paths that have to exist. Problems go back to the writer for up to two more rounds. With your own script, the writer only places your sentences into scenes, and can't change them.
+2. **Storyboard.** Claude, through the Claude API, splits the film into beats and scenes, writes the narration to the word budget, and picks what each scene shows. The result is checked before it's used: the word count, the number of chapters, code that has to be copied from the repo rather than invented, and file paths that have to exist. Problems go back to the writer for up to two more rounds. With your own script, the writer only places your sentences into scenes, and can't change them.
 3. **Voice.** One clip per sentence, trimmed of silence and cached by what was said, four at a time.
 4. **Sound.** The clips are laid on a clock with pauses between sentences, scenes and chapters. A whoosh at each scene change, a stamp on before-and-after cards, and soft pops and ticks are synthesised and mixed underneath.
 5. **Film.** The stage is a single web page that can draw any moment on demand. Headless Chrome seeks it frame by frame, ffmpeg encodes the frames, and the soundtrack is levelled to -16 LUFS.
@@ -121,7 +123,7 @@ A theme sets the film's colours, fonts, corner radius and shadows. Any  name is 
 
 ## Cost
 
-Every run prints what it spent, from OpenRouter's own figures (a run that fails partway records what it had already spent), as one line at the top of the results (and in the terminal), and keeps a running total per film in `cost.json`:
+Every run prints what it spent, the storyboard from Claude's token counts at Anthropic's published rates and the voice from OpenRouter's own figures (a run that fails partway records what it had already spent), as one line at the top of the results (and in the terminal), and keeps a running total per film in `cost.json`:
 
 ```
 cost       0.2¢ this run · voice 0.2¢ (1 new, 9 cached)
@@ -129,12 +131,12 @@ cost       0.2¢ this run · voice 0.2¢ (1 new, 9 cached)
 
 Only two things cost money. Reading the repo, the sound and the filming run on your machine.
 
-| Step | Price on OpenRouter | Typical |
+| Step | Price | Typical |
 |---|---|---|
-| Storyboard (Claude Sonnet 5.5) | $2 per million tokens in, $10 out | About 15,000 tokens in whatever the length, so an estimated 3 to 5¢ a call. A repair round resends the conversation and costs about the same again. |
-| Voice (Gemini 3.8 Flash TTS) | $9 per million audio tokens, about 37 per second of trimmed speech | About 2¢ per minute of narration. Only new sentences are paid for; cached ones are free. |
+| Storyboard (Claude Opus 5.5, Claude API) | $4 per million tokens in, $20 out, thinking included | About 15,000 tokens in whatever the length, plus Claude's thinking and the storyboard out, so an estimated 20 to 50¢ a call. A repair round resends the conversation and costs about the same again. |
+| Voice (Gemini 3.8 Flash TTS, OpenRouter) | $9 per million audio tokens, about 37 per second of trimmed speech | About 2¢ per minute of narration. Only new sentences are paid for; cached ones are free. |
 
-So a 1-minute film comes to roughly 5 to 6¢ and a 4-minute one 11 to 14¢ (estimates; `cost.json` has the real figure for each film). Re-filming after an edit costs only the changed sentences. An amount marked ≈ was estimated from token counts because OpenRouter hadn't published that call's price yet.
+So a film comes to roughly 25¢ to $1, mostly the storyboard (estimates; `cost.json` has the figure for each film). Re-filming after an edit costs only the changed sentences, and no storyboard. An amount marked ≈ is an estimate: a voice clip OpenRouter hadn't priced yet, or a storyboard from a model not in `WRITER_PRICES` (`src/config.ts`).
 
 ## Tests
 

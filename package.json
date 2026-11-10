@@ -18,5 +18,8 @@
     "github",
     "tts",
     "gitdiagram"
-  ]
+  ],
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.7.0"
+  }
 }

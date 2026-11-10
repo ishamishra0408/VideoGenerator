@@ -14,8 +14,8 @@ export const BEATS_FOR: Record<Minutes, number> = { 1: 3, 2: 4, 3: 5, 4: 6 };
 export const wordBudget = (m: Minutes) => Math.round(m * WPM);
 export const BUDGET_TOLERANCE = 0.15;
 
-/** The script writer and storyboarder, through OpenRouter. */
-export const DEFAULT_MODEL = "anthropic/claude-sonnet-5.5";
+/** The script writer and storyboarder, through the Claude API. */
+export const DEFAULT_MODEL = "claude-opus-5-5";
 
 /** GitDiagram's narrator: Gemini 3.8 Flash TTS, the Charon voice, and its style direction. */
 export const VOICE = {
@@ -30,8 +30,12 @@ export const VOICE = {
   price: { input: 0.5e-6, output: 9e-6, audioTokensPerSecond: 36 },
 } as const;
 
-/** Fallback price for the writer when a reply carries no cost ($ per token, Sonnet 5.5 on OpenRouter). */
-export const WRITER_PRICE = { input: 2e-6, output: 10e-6 };
+/** The writer's price at Anthropic's published rates, $ per token. A model not listed is estimated at the default's price. */
+export const WRITER_PRICES: Record<string, { input: number; output: number }> = {
+  "claude-opus-5-5": { input: 4e-6, output: 20e-6 },
+  "claude-sonnet-5-5": { input: 2e-6, output: 10e-6 },
+  "claude-haiku-5-5": { input: 0.1e-6, output: 0.5e-6 },
+};
 
 /** The offline fallback voice (macOS only). */
 export const SAY = { voice: "Samantha", rate: "178" } as const;

@@ -1,48 +1,54 @@
-// The script writer: one chat call to OpenRouter.
+// The script writer: one call to Claude, through the Claude API.
+import Anthropic from "@anthropic-ai/sdk";
+import { WRITER_PRICES } from "./config.ts";
 
 export interface Message { role: "user" | "assistant"; content: string }
-/** OpenRouter's own count and price for one call; `cost` is missing only if OpenRouter leaves it out. */
+/** Tokens the call used, and its price at Anthropic's published rates; `cost` is missing for a model not in WRITER_PRICES. */
 export interface Usage { prompt: number; completion: number; cost?: number }
 
-const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Models that take server-side refusal fallback (`fallbacks: "default"`). */
+const FALLS_BACK = /^claude-(opus-5|sonnet-5-5|fable-5)/;
 
-export async function chat(opts: { key: string; model: string; system: string; messages: Message[]; maxTokens?: number; temperature?: number }): Promise<{ text: string; usage: Usage }> {
-  const body = JSON.stringify({
-    model: opts.model,
-    max_tokens: opts.maxTokens ?? 12_000,
-    temperature: opts.temperature ?? 0.6,
-    messages: [{ role: "system", content: opts.system }, ...opts.messages],
-    usage: { include: true },
-  });
+export async function chat(opts: { key: string; model: string; system: string; messages: Message[]; maxTokens?: number }): Promise<{ text: string; usage: Usage }> {
+  const client = new Anthropic({ apiKey: opts.key, maxRetries: 4 });  // the SDK retries rate limits, overloads and dropped connections
   const paid: Usage = { prompt: 0, completion: 0, cost: 0 };  // an empty reply is still billed, so it counts
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(ENDPOINT, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${opts.key}`,
-        "content-type": "application/json",
-        "http-referer": "https://github.com/ishamishra0408/VideoGenerator",
-        "x-title": "videogen",
-      },
-      body,
-      signal: AbortSignal.timeout(300_000),
-    }).catch((e) => ({ ok: false, status: 0, text: async () => String(e) }) as unknown as Response);
-    if (res.ok) {
-      const json = (await res.json()) as { choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number } };
-      const text = json.choices?.[0]?.message?.content;
-      paid.prompt += json.usage?.prompt_tokens ?? 0;
-      paid.completion += json.usage?.completion_tokens ?? 0;
-      paid.cost = paid.cost === undefined || json.usage?.cost === undefined ? undefined : paid.cost + json.usage.cost;
-      if (typeof text === "string" && text.trim()) return { text, usage: paid };
-      if (attempt < 2) continue;
-      throw new Error("The writer returned an empty reply.");
+    let msg: Anthropic.Beta.BetaMessage;
+    try {
+      // streamed: thinking plus a long storyboard can outlast a plain request's timeout
+      msg = await client.beta.messages.stream({
+        model: opts.model,
+        max_tokens: opts.maxTokens ?? 64_000,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "high" },
+        system: opts.system,
+        messages: opts.messages,
+        // a safety classifier can decline a harmless request: this re-runs it on Anthropic's recommended fallback model
+        ...(FALLS_BACK.test(opts.model) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
+      }).finalMessage();
+    } catch (err) {
+      throw new Error(writerError(err));
     }
-    if (res.status === 402) throw new Error("OpenRouter says the balance is empty (402). Top it up, then run again.");
-    if (res.status === 401) throw new Error("OpenRouter rejected the key (401). Check OPENROUTER_API_KEY.");
-    if ((res.status === 0 || res.status === 429 || res.status >= 500) && attempt < 4) { await sleep(1500 * 2 ** attempt); continue; }
-    throw new Error(`The writer failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    const price = WRITER_PRICES[msg.model] ?? WRITER_PRICES[opts.model];
+    paid.prompt += msg.usage.input_tokens;
+    paid.completion += msg.usage.output_tokens;  // thinking is billed as output, and counted here
+    paid.cost = price && paid.cost !== undefined ? paid.cost + msg.usage.input_tokens * price.input + msg.usage.output_tokens * price.output : undefined;
+    if (msg.stop_reason === "refusal") throw new Error(`Claude declined to write this storyboard${msg.stop_details?.category ? ` (${msg.stop_details.category})` : ""}. Try a different brief or script.`);
+    if (msg.stop_reason === "max_tokens") throw new Error(`The storyboard ran past ${opts.maxTokens ?? 64_000} tokens before it was finished.`);
+    const text = msg.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+    if (text.trim()) return { text, usage: paid };
+    if (attempt >= 2) throw new Error("The writer returned an empty reply.");
   }
+}
+
+function writerError(err: unknown): string {
+  if (err instanceof Anthropic.AuthenticationError) return "The Claude API rejected the key (401). Check ANTHROPIC_API_KEY.";
+  if (err instanceof Anthropic.PermissionDeniedError) return `The Claude API refused this key (403): ${err.message}`;
+  if (err instanceof Anthropic.RateLimitError) return "The Claude API's rate limit is spent, even after retrying. Wait a minute, then run again.";
+  if (err instanceof Anthropic.BadRequestError) return `The Claude API turned the request down (400): ${err.message}`;  // an empty credit balance arrives here
+  if (err instanceof Anthropic.APIConnectionError) return "Couldn't reach the Claude API. Check the connection, then run again.";
+  if (err instanceof Anthropic.APIError) return `The writer failed (${err.status}): ${err.message}`;
+  return `The writer failed: ${(err as Error).message}`;
 }
 
 /** The JSON object inside a reply, with or without a code fence around it. */

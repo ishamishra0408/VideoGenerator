@@ -19,7 +19,7 @@ const HELP = `videogen: turn a repo into a 1 to 4 minute narrated explainer film
   --mode light|dark     the theme's light or dark version (default light)
   --themes              list the 21st.dev themes
   --voice gemini|say    Gemini 3.8 Flash TTS, Charon (default), or macOS say offline
-  --model <slug>        OpenRouter model for the script (default anthropic/claude-sonnet-5.5)
+  --model <id>          Claude model for the script (default claude-opus-5-5)
   --storyboard-only     stop after writing storyboard.json
   --from <file>         film an existing storyboard.json, skipping reading and writing
   --stills <t,t,...>    PNG stills at those seconds instead of the film

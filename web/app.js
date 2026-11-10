@@ -390,6 +390,7 @@
   fetch("/api/status").then(function (r) { return r.json(); }).then(function (s) {
     S.key = s.key;
     $("#keynote").hidden = s.key;
+    if (!s.key) $("#keynote").textContent = "No " + (s.missing || []).join(" or ");
     $("#signout").hidden = !s.auth;
     if (!s.offline) { $("#voice-say").disabled = true; if (S.voice === "say") { S.voice = "gemini"; pick("voice", "gemini"); } }
     busy(false);

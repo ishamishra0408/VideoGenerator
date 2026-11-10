@@ -2,7 +2,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { join, resolve } from "node:path";
-import { CACHE_DIR, DEFAULT_MODEL, FPS, type Minutes, RENDER, TRANSITION, WPM, WRITER_PRICE } from "./config.ts";
+import { CACHE_DIR, DEFAULT_MODEL, FPS, type Minutes, RENDER, TRANSITION, WPM, WRITER_PRICES } from "./config.ts";
 import { addSpend, costLine, recordCost, zero, type FilmCost, type RunCost, type Spend } from "./cost.ts";
 import { computeCues, sfxEvents } from "./cues.ts";
 import { mix, writeWav } from "./audio.ts";
@@ -50,12 +50,18 @@ export interface JobResult {
   captions?: string;
   duration?: number;
   stills?: string[];
-  /** What this run spent on OpenRouter, and the film's total across its runs. */
+  /** What this run spent on the Claude API and OpenRouter, and the film's total across its runs. */
   cost: { run: RunCost; film: FilmCost; line: string };
 }
 
 export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "film";
 const clampMinutes = (m: number) => Math.min(4, Math.max(1, Math.round(m))) as Minutes;
+/** 45 s, 12 min, 1 h 5 min */
+export const timeLeft = (s: number) => {
+  if (s < 90) return `${Math.ceil(s)} s`;
+  const m = Math.round(s / 60);
+  return m < 90 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+};
 
 export async function runJob(job: Job, report: (p: Progress) => void = () => {}): Promise<JobResult> {
   const warnings: string[] = [];
@@ -92,7 +98,7 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
       dir = resolve(job.outDir ?? join("out", `${slug(plan.title)}-${clampMinutes(planWords(plan) / WPM)}min`));
     } else {
       if (!job.repo) throw new Error("Give a repo: owner/name, a GitHub URL or a folder.");
-      const key = requireKey("OPENROUTER_API_KEY");
+      const key = requireKey("ANTHROPIC_API_KEY");
       report({ stage: "repo", message: `Reading ${job.repo}` });
       const context = await loadRepo(job.repo);
       report({ stage: "repo", message: `${context.paths.length} files, ${context.files.length} read closely` });
@@ -124,7 +130,7 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
         async (system, messages) => {
           const { text, usage } = await chat({ key, model, system, messages });
           const exact = usage.cost !== undefined;
-          addSpend(storyboardSpend, usage.cost ?? usage.prompt * WRITER_PRICE.input + usage.completion * WRITER_PRICE.output, usage.prompt, usage.completion, exact);
+          addSpend(storyboardSpend, usage.cost ?? usage.prompt * WRITER_PRICES[DEFAULT_MODEL].input + usage.completion * WRITER_PRICES[DEFAULT_MODEL].output, usage.prompt, usage.completion, exact);
           return text;
         },
         (s) => report({ stage: "storyboard", message: s }),
@@ -178,13 +184,15 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
     const fps = job.fps ?? FPS;
     const workers = job.workers ?? RENDER.workers ?? Math.max(1, Math.min(4, Math.floor(cpus().length / 2)));
     const video = join(dir, `${base}-${Math.max(1, Math.round(timing.duration / 60))}min.mp4`);
-    const t0 = Date.now();
     report({ stage: "render", message: `Filming ${Math.ceil(timing.duration * fps)} frames in ${workers} ${workers === 1 ? "browser" : "browsers"}`, fraction: 0 });
+    let first: { at: number; done: number } | undefined;
     await renderVideo({
       stageFile, audio: soundtrack, out: video, duration: timing.duration, fps, workers,
       onProgress: (done, total) => {
-        const secs = (Date.now() - t0) / 1000, left = done ? (secs / done) * (total - done) : 0;
-        report({ stage: "render", message: `${done}/${total} frames, about ${Math.ceil(left)} s left`, fraction: done / total });
+        // timed from the first frames, so Chrome's start-up (slow on a small server) doesn't count as filming
+        first ??= { at: Date.now(), done };
+        const left = done > first.done ? ((Date.now() - first.at) / (done - first.done)) * (total - done) / 1000 : 0;
+        report({ stage: "render", message: `${done}/${total} frames${left ? `, about ${timeLeft(left)} left` : ""}`, fraction: done / total });
       },
     });
     const m = Math.floor(timing.duration / 60), s = Math.round(timing.duration % 60);

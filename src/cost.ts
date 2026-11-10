@@ -1,4 +1,4 @@
-// What a run spent on OpenRouter, from OpenRouter's own numbers, kept per film in cost.json.
+// What a run spent, kept per film in cost.json: the storyboard at Anthropic's published rates, the voice from OpenRouter's own numbers.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 

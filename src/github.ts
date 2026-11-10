@@ -106,10 +106,24 @@ async function gh(path: string, accept = "application/vnd.github+json"): Promise
   return fetch(`https://api.github.com${path}`, { headers, signal: AbortSignal.timeout(30_000) });
 }
 
+/** Why GitHub said 403 or 429: a spent rate limit (and when it comes back), or a plain refusal. */
+export function refusalMessage(status: number, headers: Headers, hasToken: boolean, now = Date.now()): string {
+  const retry = Number(headers.get("retry-after"));
+  const reset = Number(headers.get("x-ratelimit-reset")) * 1000;
+  const limited = status === 429 || headers.get("x-ratelimit-remaining") === "0" || retry > 0;
+  if (!limited) return `GitHub refused the request (${status}).${hasToken ? " Check that GITHUB_TOKEN can read this repo." : ""}`;
+  const wait = retry > 0 ? retry * 1000 : reset > now ? reset - now : 0;
+  const when = wait ? ` It comes back in ${Math.max(1, Math.ceil(wait / 60_000))} min.` : "";
+  if (hasToken) return `GitHub's rate limit for this GITHUB_TOKEN is spent.${when}`;
+  // 60 an hour is per IP address, and a shared host like Render's free plan shares its address with other sites
+  return `GitHub's rate limit is spent: without a token it allows 60 requests an hour per IP address, and on a shared host such as Render other sites spend it too.${when} Set GITHUB_TOKEN (in .env, or under Environment on Render) to raise it to 5,000 an hour.`;
+}
+
 async function ghJson<T>(path: string): Promise<T> {
   const res = await gh(path);
   if (res.status === 404) throw new Error(`GitHub can't find ${path.replace(/^\/repos\//, "").split("/").slice(0, 2).join("/")}. Check the name, or set GITHUB_TOKEN for a private repo.`);
-  if (res.status === 403 || res.status === 429) throw new Error("GitHub's rate limit is spent. Set GITHUB_TOKEN in .env to raise it to 5,000 an hour.");
+  if (res.status === 401) throw new Error("GitHub turned down GITHUB_TOKEN: it's wrong or expired. Make a new one, or remove it.");
+  if (res.status === 403 || res.status === 429) throw new Error(refusalMessage(res.status, res.headers, !!process.env.GITHUB_TOKEN));
   if (!res.ok) throw new Error(`GitHub ${res.status} on ${path}`);
   return res.json() as Promise<T>;
 }

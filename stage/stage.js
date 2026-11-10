@@ -227,6 +227,25 @@
   };
   window.DURATION = DURATION;
 
+  // The background never moves, but its blurred glows cost Chrome more than the rest of a frame together. The renderer
+  // photographs it alone once (backgroundOnly) and hands the picture back (freezeBackground) to stand in for it.
+  var fore = ["brand", "tag", "scenes", "rail"].map(function (id) { return document.getElementById(id); });
+  var loaded = new Promise(function (r) { if (document.readyState === "complete") r(); else window.addEventListener("load", function () { r(); }); });
+  window.backgroundOnly = function () {
+    fore.forEach(function (el) { el.style.opacity = "0"; });
+    return loaded;
+  };
+  window.freezeBackground = function (src) {
+    var img = new Image();
+    img.src = src;
+    return img.decode().then(function () {
+      var bg = document.getElementById("bg");
+      bg.replaceChildren(img);
+      bg.classList.add("frozen");
+      fore.forEach(function (el) { el.style.opacity = ""; });
+    });
+  };
+
   document.fonts.ready.then(function () {
     slides.forEach(function (slide, i) { layout(slide, scenes[i].s.kind); });
     collect();
