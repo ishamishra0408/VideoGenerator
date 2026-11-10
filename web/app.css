@@ -88,6 +88,7 @@ h2{font:800 28px/1.1 var(--sans);letter-spacing:-.02em;overflow-wrap:anywhere}
 .scene textarea{resize:none;overflow:hidden;font-size:15px}
 .items{display:flex;flex-wrap:wrap;gap:6px}
 .items span{font-size:12px;padding:3px 9px;border:1.5px solid var(--ink-2);border-radius:99px;color:var(--ink-2)}
+.scene .thumb{display:block;width:100%;max-width:360px;border:2px solid var(--ink);border-radius:8px}
 
 .player{overflow:hidden}
 .yt{margin-top:16px;padding:18px 20px;display:grid;gap:14px}

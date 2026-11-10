@@ -11,7 +11,7 @@ import { chromePath, ffmpegPath, run } from "./proc.ts";
 import { RENDER } from "./config.ts";
 
 const STAGE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "stage");
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export interface StageData { plan: Plan; cues: SceneCues[]; transition: number; duration: number }
 
@@ -26,7 +26,7 @@ export function buildStage(data: StageData, themeCss = ""): string {
 
 // ---------- a minimal DevTools protocol client ----------
 
-class Cdp {
+export class Cdp {
   private id = 0;
   private pending = new Map<number, { ok: (v: any) => void; fail: (e: Error) => void }>();
   errors: string[] = [];
@@ -69,7 +69,7 @@ class Cdp {
   close() { this.ws.close(); }
 }
 
-async function launchChrome(): Promise<{ port: number; proc: ChildProcess; dir: string }> {
+export async function launchChrome(): Promise<{ port: number; proc: ChildProcess; dir: string }> {
   const dir = mkdtempSync(join(tmpdir(), "videogen-chrome-"));
   // In a container Chrome runs as root with a tiny /dev/shm: no sandbox there, and shared memory on disk.
   const container = process.getuid?.() === 0 || process.env.CHROME_NO_SANDBOX === "1";
@@ -122,7 +122,7 @@ async function shot(cdp: Cdp, t: number, format: "jpeg" | "png"): Promise<Buffer
 }
 
 /** Chrome keeps writing its profile while it exits: wait for it, and never let cleanup fail a film. */
-async function closeChrome(c: { proc: ChildProcess; dir: string }): Promise<void> {
+export async function closeChrome(c: { proc: ChildProcess; dir: string }): Promise<void> {
   const exited = new Promise((r) => (c.proc.exitCode !== null ? r(null) : c.proc.once("exit", r)));
   c.proc.kill();
   await Promise.race([exited, sleep(3000)]);

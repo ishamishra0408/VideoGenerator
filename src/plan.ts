@@ -1,21 +1,25 @@
 // The storyboard: beats, scenes, the narration each scene carries, and what lands on screen.
+import type { Screen } from "./capture.ts";
 import { BEATS_FOR, BUDGET_TOLERANCE, WPM, type Minutes, wordBudget } from "./config.ts";
 import { contextToText, type RepoContext } from "./github.ts";
-import { extractJson, type Message } from "./llm.ts";
+import { extractJson, type Block, type Message } from "./llm.ts";
 import { countWords, stripMarkdown } from "./sentences.ts";
 
-export const KINDS = ["title", "statement", "cards", "flow", "code", "tree", "stats", "compare", "checklist"] as const;
+export const KINDS = ["title", "statement", "cards", "flow", "code", "tree", "stats", "compare", "checklist", "screen"] as const;
 export type Kind = (typeof KINDS)[number];
 
-export interface Item { title: string; text?: string; tag?: string; on?: number }
-export interface Scene { kind: Kind; eyebrow?: string; heading: string; lines: string[]; items: Item[]; code?: { file?: string; text: string } }
+/** `box`: on a screen scene, what the callout points at, as x, y, width, height in the screenshot's pixels. */
+export interface Item { title: string; text?: string; tag?: string; on?: number; box?: [number, number, number, number] }
+/** A screenshot as a scene shows it: `src` is inside the film's folder. */
+export interface Shot { src: string; url?: string; title?: string; w: number; h: number }
+export interface Scene { kind: Kind; eyebrow?: string; heading: string; lines: string[]; items: Item[]; code?: { file?: string; text: string }; screen?: Shot }
 export interface Beat { title: string; scenes: Scene[] }
 export interface Plan { title: string; repo: string; url?: string; tag: string; beats: Beat[] }
 
 /** How many items each kind of scene can carry. */
 export const LIMITS: Record<Kind, [number, number]> = {
   title: [0, 4], statement: [0, 3], cards: [2, 4], flow: [2, 5], code: [0, 3],
-  tree: [3, 9], stats: [2, 4], compare: [2, 2], checklist: [2, 5],
+  tree: [3, 9], stats: [2, 4], compare: [2, 2], checklist: [2, 5], screen: [0, 3],
 };
 
 export interface PlanRequest {
@@ -31,6 +35,10 @@ export interface PlanRequest {
   adapt?: string;
   /** Extra direction for the writer, such as the audience. */
   brief?: string;
+  /** Screenshots of the app; `data` is the JPEG, base64, for the writer to look at. */
+  screens?: (Screen & { data?: string })[];
+  /** Where the screenshots were taken, such as http://localhost:5173/. */
+  app?: string;
 }
 
 const ARCS: Record<number, string> = {
@@ -120,8 +128,26 @@ export function buildPrompt(req: PlanRequest): { system: string; user: string } 
     );
     if (req.adapt) parts.push(`Base the narration on this script. Keep its meaning, its order and its phrasing where it fits, and tighten or expand it to the word count above.\n<script>\n${req.adapt.trim()}\n</script>`);
   }
+  if (req.screens?.length) parts.push(screensText(req.screens, req.app));
   if (req.brief) parts.push(`Direction from the person making the film: ${req.brief}`);
   return { system: SYSTEM, user: parts.join("\n\n") };
+}
+
+/** The screenshots as the writer reads them: what each is, and the things on it a callout can point at. */
+function screensText(screens: Screen[], app?: string): string {
+  const list = screens.map((s) => {
+    const u = s.url ? new URL(s.url) : null;
+    const head = `${s.id}: "${s.title}", ${u ? `the page ${u.pathname}${u.search}${u.hash}` : "an uploaded picture"}, ${s.w}×${s.h}`;
+    if (!s.regions.length) return `${head}. Its callouts can't point at a place: give them no region.`;
+    return `${head}. On it:\n` + s.regions.map((r) => `  ${r.id} ${r.label} at x ${r.x}, y ${r.y}, ${r.w}×${r.h}`).join("\n");
+  });
+  return `Screenshots of the app itself${app ? `, taken from it running at ${app}` : ""}, are attached above, in this order, each labelled with its id:\n${list.join("\n")}\n\n` +
+    `There is one more scene kind, for these:\n` +
+    `- screen: one of the screenshots, shown in a browser window. Set "screen" to its id, such as "s1". items: 0 to 3 callouts about what the lines mention, ` +
+    `each with a title (under 6 words), text (under 12 words), "on", and "region": the id of the thing it points at on that screenshot, such as "r4". ` +
+    `The picture zooms onto each region as its callout appears, so list them in the order the lines mention them.\n` +
+    `Use a screen scene wherever the narration is about what someone sees or does in the app: it's the most convincing picture there is, so show at least ${Math.min(2, screens.length)} of the screenshots. ` +
+    `Screen scenes may follow one another. Say only what a screenshot shows or the repository supports.`;
 }
 
 // ---------- checking what came back ----------
@@ -166,8 +192,9 @@ export function codeOverlap(code: string, ctx: RepoContext): number {
 function downgrade(scene: Scene): Scene {
   // A scene without what its kind needs becomes the nearest kind that still works.
   const n = scene.items.length;
-  if (n >= 2) return { ...scene, kind: "cards", items: scene.items.slice(0, 4), code: undefined };
-  return { ...scene, kind: "statement", items: scene.items.slice(0, 3).map((i) => ({ title: i.title })), code: undefined };
+  const items = scene.items.map(({ box, ...i }) => i);
+  if (n >= 2) return { ...scene, kind: "cards", items: items.slice(0, 4), code: undefined, screen: undefined };
+  return { ...scene, kind: "statement", items: items.slice(0, 3).map((i) => ({ title: i.title })), code: undefined, screen: undefined };
 }
 
 /** Checks and tidies a storyboard. Problems go back to the writer; on the final attempt they're fixed here instead. */
@@ -201,11 +228,13 @@ export function checkPlan(raw: unknown, req: PlanRequest, final = false): Checke
         for (const l of lines) if (countWords(l) > 40) warnings.push(`${where}: a ${countWords(l)}-word sentence.`);
       }
 
+      const regionOf = new Map<Item, string>();
       let items: Item[] = (Array.isArray(s?.items) ? s.items : []).map((it: any) => {
         const item: Item = { title: cleanLabel(str(it?.title ?? it, 90)) };
         const text = cleanLabel(str(it?.text, 140)); if (text) item.text = text;
         const tag = str(it?.tag, 28); if (tag) item.tag = tag;
         if (Number.isInteger(it?.on)) item.on = it.on;
+        if (it?.region !== undefined) regionOf.set(item, str(it.region, 12));
         return item;
       }).filter((i: Item) => i.title);
 
@@ -223,6 +252,20 @@ export function checkPlan(raw: unknown, req: PlanRequest, final = false): Checke
           problems.push(`${where}: the code isn't copied from the files in the context. Copy a real excerpt exactly, or use another kind.`);
           if (final) scene = downgrade(scene);
         } else scene.code = { file: str(s?.code?.file, 80) || undefined, text: capCode(text) };
+      }
+      if (kind === "screen") {
+        const id = str(s?.screen, 12), shot = req.screens?.find((x) => x.id === id);
+        if (!shot) {
+          problems.push(req.screens?.length ? `${where}: "screen" must be one of ${req.screens.map((x) => x.id).join(", ")}.` : `${where}: there are no screenshots, so use another kind.`);
+          if (final) scene = downgrade(scene);
+        } else {
+          scene.screen = { src: shot.file, url: shot.url, title: shot.title, w: shot.w, h: shot.h };
+          for (const it of scene.items) {
+            const rid = regionOf.get(it), r = rid ? shot.regions.find((x) => x.id === rid) : undefined;
+            if (r) it.box = [r.x, r.y, r.w, r.h];
+            else if (rid) warnings.push(`${where}: ${shot.id} has no region ${rid}, so "${it.title}" points at nothing.`);
+          }
+        }
       }
       if (scene.kind === "tree") {
         const isDir = (p: string) => req.context.paths.some((q) => q.startsWith(normPath(p) + "/"));
@@ -278,7 +321,7 @@ export function checkPlan(raw: unknown, req: PlanRequest, final = false): Checke
     if (beats.length !== want) (final ? warnings : problems).push(`There are ${beats.length} beats; make ${want}.`);
   }
   for (let i = 1; i < allScenes.length; i++)
-    if (allScenes[i].kind === allScenes[i - 1].kind) warnings.push(`Two ${allScenes[i].kind} scenes in a row.`);
+    if (allScenes[i].kind === allScenes[i - 1].kind && allScenes[i].kind !== "screen") warnings.push(`Two ${allScenes[i].kind} scenes in a row.`);
 
   // Final pass: drop scenes left with nothing to say, and beats left with no scenes.
   if (final) {
@@ -313,7 +356,11 @@ export async function makePlan(
   log: (s: string) => void = () => {},
 ): Promise<{ plan: Plan; warnings: string[] }> {
   const { system, user } = buildPrompt(req);
-  const messages: Message[] = [{ role: "user", content: user }];
+  const pictures: Block[] = (req.screens ?? []).filter((s) => s.data).flatMap((s): Block[] => [
+    { type: "text", text: `Screenshot ${s.id}: ${s.title}` },
+    { type: "image", source: { type: "base64", media_type: "image/jpeg", data: s.data! } },
+  ]);
+  const messages: Message[] = [{ role: "user", content: pictures.length ? [...pictures, { type: "text", text: user }] : user }];
   const ROUNDS = 3;
   for (let attempt = 0; attempt < ROUNDS; attempt++) {
     const final = attempt === ROUNDS - 1;
@@ -326,6 +373,18 @@ export async function makePlan(
     messages.push({ role: "assistant", content: reply }, { role: "user", content: `Fix these and return the whole JSON object again:\n- ${res.problems.join("\n- ")}` });
   }
   throw new Error("The writer didn't return a usable storyboard.");
+}
+
+/** A screen scene's picture: a JPEG, PNG or WebP in the film's screens folder, and its size. */
+function shotShape(v: any, where: string): Shot {
+  const src = typeof v?.src === "string" ? v.src.trim() : "";
+  if (!/^screens\/[\w.-]+\.(jpe?g|png|webp)$/i.test(src) || src.includes("..")) throw new Error(`${where}: a screen scene needs screen.src, a picture in the film's screens folder.`);
+  const w = Number(v.w), h = Number(v.h);
+  if (!(w > 0 && h > 0 && w <= 10_000 && h <= 10_000)) throw new Error(`${where}: a screen scene needs the picture's width and height.`);
+  const shot: Shot = { src, w: Math.round(w), h: Math.round(h) };
+  if (typeof v.url === "string" && /^https?:\/\//.test(v.url)) shot.url = v.url.slice(0, 300);
+  if (v.title) shot.title = str(v.title, 120);
+  return shot;
 }
 
 /** A storyboard that came from a file or the web page: checked for shape, tidied, never rewritten. */
@@ -345,6 +404,7 @@ export function validatePlanShape(raw: any): Plan {
           if (it?.text) item.text = str(it.text, 140);
           if (it?.tag) item.tag = str(it.tag, 28);
           if (Number.isInteger(it?.on)) item.on = it.on;
+          if (s.kind === "screen" && Array.isArray(it?.box) && it.box.length === 4 && it.box.every((v: unknown) => Number.isFinite(v) && (v as number) >= 0)) item.box = it.box.map(Math.round);
           return item;
         }).filter((i: Item) => i.title);
         const [lo] = LIMITS[s.kind as Kind];
@@ -356,6 +416,7 @@ export function validatePlanShape(raw: any): Plan {
           if (typeof s.code?.text !== "string" || !s.code.text.trim()) throw new Error(`${where}: a code scene needs code.text.`);
           scene.code = { file: s.code.file ? str(s.code.file, 80) : undefined, text: capCode(s.code.text) };
         }
+        if (s.kind === "screen") scene.screen = shotShape(s.screen, where);
         return scene;
       }),
     };

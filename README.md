@@ -39,9 +39,24 @@ node src/cli.ts --from examples/storyboard.json --voice say
 
 Pick a theme under **Theme**: any 21st.dev community theme in its light or dark version, with its colours and font shown as swatches. Past films are listed underneath, with the MP4 and captions to download. Re-filming an edited storyboard only re-voices the sentences you changed; the rest come from the cache.
 
+## Show the app itself
+
+The app doesn't have to be deployed anywhere. Run it on your own computer (for example `npm run dev`), then give its address under **App screens** on the page, or `--app` on the command line:
+
+```bash
+node src/cli.ts --repo ../my-app --app "localhost:5173"                       # follows the app's own links, up to 8 pages
+node src/cli.ts --repo ../my-app --app "localhost:5173 /dashboard /settings"  # just these pages, in this order
+node src/cli.ts --repo owner/name --shots ~/Desktop/screens                   # screenshots you took yourself
+```
+
+videogen opens the app in its own headless Chrome, in a 1440×900 window at twice the pixels, and screenshots each page into the film's `screens/` folder. While following links it stays on the app's own address and skips anything that looks like signing out, deleting or a download. Claude sees every screenshot, with a list of the headings, buttons, fields and pictures on it, and puts them in **screen** scenes: the page in a browser window, the camera moving onto each thing the narration mentions as its callout appears. A script's `[On screen: the dashboard]` notes pick the matching screenshot. All of this happens before Claude is paid, so an app that isn't running costs nothing; videogen says so and stops.
+
+- **Pages behind a sign-in** come out as the sign-in page, with a note saying so. Take those screenshots yourself and add them with **Add screenshots** (or `--shots`): PNG, JPEG or WebP, up to 12, alongside an address or instead of one.
+- **On Render** (or any server other people reach), `localhost` means the server, not your computer, so a private address is refused. Give a public address such as a staging site, or upload screenshots.
+
 ## Post to YouTube
 
-Under a finished film, **YouTube** opens a panel. Connect your Google account once, check the title and description (filled in from the storyboard, with chapters YouTube recognises), pick Private, Unlisted or Public, and post. The upload goes up in pieces and carries on if the connection drops. Once posted, the panel collapses to the links (the video and YouTube Studio), and the film shows its YouTube link under the video from then on (kept in the film's folder as `youtube.json`). **Post to another channel** opens the panel again: Disconnect, connect the other Google account (or pick the other channel when Google asks), and post. The film then lists a link for each channel it's on.
+Under a finished film, **YouTube** opens a panel. Connect your Google account once, check the title and description (filled in from the storyboard, with chapters YouTube recognises), pick Private, Unlisted or Public, and post. The upload goes up in pieces and carries on if the connection drops. Once posted, the panel collapses to the links (the video and YouTube Studio), and the film shows its YouTube link under the video from then on (kept in the film's folder as `youtube.json`). Re-filming or changing the theme makes a new cut that starts unposted; earlier posts stay on record in `youtube.json`. **Post to another channel** opens the panel again: Disconnect, connect the other Google account (or pick the other channel when Google asks), and post. The film then lists a link for each channel it's on.
 
 One-time Google setup:
 
@@ -56,7 +71,7 @@ What Google decides:
 - While the app is in Testing, Google ends the sign-in after 7 days; connect again.
 - The default daily quota allows only a few uploads a day.
 
-Each browser connects its own Google account and posts to its own channel; nobody can post with someone else's connection. The site asks only to upload videos and to see the email address. The tokens stay on the server in `.videogen-cache/youtube/` (one file per browser, not in git), and **Disconnect** revokes them. To let only certain accounts connect, set `GOOGLE_ALLOWED_EMAIL`. On Render's free plan the tokens are lost whenever the service restarts or sleeps, so you connect again.
+Each browser connects its own Google account and posts to its own channel; nobody can post with someone else's connection. The site asks only to upload videos (and to see the email address when `GOOGLE_ALLOWED_EMAIL` is set, to check it). The tokens stay on the server in `.videogen-cache/youtube/` (one file per browser, not in git), and **Disconnect** revokes them. To let only certain accounts connect, set `GOOGLE_ALLOWED_EMAIL`. On Render's free plan the tokens are lost whenever the service restarts or sleeps, so you connect again.
 
 While the Google app is in **Testing**, only the accounts listed as test users (up to 100) can connect. To let any Google account connect, publish the app under **Google Auth Platform → Audience**. Until Google verifies it, people see an "unverified app" warning first, and apps asking for YouTube upload permission are capped at 100 users.
 
@@ -83,7 +98,7 @@ While the Google app is in **Testing**, only the accounts listed as test users (
 | `VIDEOGEN_FPS` | `25` | Frames a second |
 | `CHROME_PATH`, `FFMPEG_PATH` | found on the system | |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | none | Turn on posting to YouTube |
-| `GOOGLE_ALLOWED_EMAIL` | any account | The only Google account that may be connected |
+| `GOOGLE_ALLOWED_EMAIL` | any account | The only Google account that may be connected. Setting it makes the sign-in ask for the email too, which can make Google fail with a bare 500 for a channel that's a Brand Account. |
 | `PUBLIC_URL` | Render's own URL, else `http://localhost:4319` | The address Google sends you back to after signing in |
 
 ## Options
@@ -95,6 +110,8 @@ While the Google app is in **Testing**, only the accounts listed as test users (
 | `--script <file>` | Your narration, kept word for word. Each paragraph or list item is spoken as its own sentence, and Markdown headings hint where chapters go. A shooting script works too: timecode lines such as `0:20–0:55 — Run 1` hint at chapters, `[On screen: …]` notes tell the writer what to show and aren't spoken, and when most of the narration is in quote marks only the quoted words are spoken (a title or running time outside them is left out, with a note saying so). With a script, your words set the length, not its timecodes, so a long script makes a film longer than 4 minutes. |
 | `--adapt` | Fit `--script` to `--minutes` instead of keeping every word |
 | `--brief <text>` | Direction for the writer, such as "for a hiring manager" |
+| `--app <url> [pages]` | Your app, running, such as `--app "localhost:5173 /dashboard"`: its screenshots go in the film. Without pages it follows the app's own links, up to 8 pages. See [Show the app itself](#show-the-app-itself). |
+| `--shots <file\|folder>` | Screenshots of the app (PNG, JPEG or WebP) to use as well; repeat for more |
 | `--theme <name\|link>` | A 21st.dev community theme by name (`vintage-paper`) or link. |
 | `--mode light\|dark` | The theme's light or dark version (default light) |
 | `--voice gemini\|say` | Gemini 3.8 Flash TTS as Charon (default), or macOS `say` offline |
@@ -110,12 +127,13 @@ While the Google app is in **Testing**, only the accounts listed as test users (
 ## How it works
 
 1. **Read.** GitHub's API (or the folder) gives the file tree, the README, the manifests, entry points and a few key source files: about 48,000 characters of README and files, plus a trimmed file tree.
-2. **Storyboard.** Claude, through the Claude API, splits the film into beats and scenes, writes the narration to the word budget, and picks what each scene shows. The result is checked before it's used: the word count, the number of chapters, code that has to be copied from the repo rather than invented, and file paths that have to exist. Problems go back to the writer for up to two more rounds. With your own script, the writer only places your sentences into scenes, and can't change them.
-3. **Voice.** One clip per sentence, trimmed of silence and cached by what was said, four at a time.
-4. **Sound.** The clips are laid on a clock with pauses between sentences, scenes and chapters. A whoosh at each scene change, a stamp on before-and-after cards, and soft pops and ticks are synthesised and mixed underneath.
-5. **Film.** The stage is a single web page that can draw any moment on demand. Headless Chrome seeks it frame by frame, ffmpeg encodes the frames, and the soundtrack is levelled to -16 LUFS.
+2. **Screens.** With an app address, headless Chrome screenshots its pages and notes what's on each; uploaded screenshots are resized to at most 1920 wide.
+3. **Storyboard.** Claude, through the Claude API, splits the film into beats and scenes, writes the narration to the word budget, and picks what each scene shows. The result is checked before it's used: the word count, the number of chapters, code that has to be copied from the repo rather than invented, and file paths that have to exist. Problems go back to the writer for up to two more rounds. With your own script, the writer only places your sentences into scenes, and can't change them.
+4. **Voice.** One clip per sentence, trimmed of silence and cached by what was said, four at a time.
+5. **Sound.** The clips are laid on a clock with pauses between sentences, scenes and chapters. A whoosh at each scene change, a stamp on before-and-after cards, and soft pops and ticks are synthesised and mixed underneath.
+6. **Film.** The stage is a single web page that can draw any moment on demand. Headless Chrome seeks it frame by frame, ffmpeg encodes the frames, and the soundtrack is levelled to -16 LUFS.
 
-The stage has nine kinds of scene: a title card, a statement, cards, a flow with wires, a code excerpt with callouts, a file tree, stats, a before-and-after, and a checklist.
+The stage has ten kinds of scene: a title card, a statement, cards, a flow with wires, a code excerpt with callouts, a file tree, stats, a before-and-after, a checklist, and a screenshot of the app in a browser window.
 
 ## Themes
 
@@ -135,6 +153,8 @@ Only two things cost money. Reading the repo, the sound and the filming run on y
 |---|---|---|
 | Storyboard (Claude Opus 5.5, Claude API) | $4 per million tokens in, $20 out, thinking included | About 15,000 tokens in whatever the length, plus Claude's thinking and the storyboard out, so an estimated 20 to 50¢ a call. A repair round resends the conversation and costs about the same again. |
 | Voice (Gemini 3.8 Flash TTS, OpenRouter) | $9 per million audio tokens, about 37 per second of trimmed speech | About 2¢ per minute of narration. Only new sentences are paid for; cached ones are free. |
+
+Screenshots of the app add about 2,000 tokens each to every storyboard call, so 8 of them add roughly 7¢ a call.
 
 So a film comes to roughly 25¢ to $1, mostly the storyboard (estimates; `cost.json` has the figure for each film). Re-filming after an edit costs only the changed sentences, and no storyboard. An amount marked ≈ is an estimate: a voice clip OpenRouter hadn't priced yet, or a storyboard from a model not in `WRITER_PRICES` (`src/config.ts`).
 

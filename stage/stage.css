@@ -81,9 +81,9 @@ svg.wires path{fill:none;stroke:var(--ink);stroke-width:5;stroke-linecap:round;s
 /* code */
 .codewrap{display:flex;gap:44px;width:100%;max-height:100%;align-items:center}
 .codecard{flex:1.7 1 0;min-width:0;max-height:100%;display:flex;flex-direction:column;overflow:hidden}
-.codecard .bar{flex:none;display:flex;align-items:center;gap:10px;padding:16px 24px;border-bottom:var(--line-w) solid var(--line);background:var(--paper-2);font:600 20px var(--mono);color:var(--bar-ink,var(--ink-2))}
-.codecard .bar i{width:14px;height:14px;border-radius:50%;border:calc(var(--line-w) * .85) solid var(--line);background:var(--card)}
-.codecard .bar span{margin-left:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.codecard .bar,.window .bar{flex:none;display:flex;align-items:center;gap:10px;padding:16px 24px;border-bottom:var(--line-w) solid var(--line);background:var(--paper-2);font:600 20px var(--mono);color:var(--bar-ink,var(--ink-2))}
+.codecard .bar i,.window .bar i{width:14px;height:14px;border-radius:50%;border:calc(var(--line-w) * .85) solid var(--line);background:var(--card)}
+.codecard .bar span,.window .bar span{margin-left:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 pre.code{padding:24px 30px;font:500 calc(24px * var(--cs,1))/1.5 var(--mono);white-space:pre;overflow:hidden}
 pre.code .cl{display:block;overflow:hidden;text-overflow:ellipsis}
 pre.code .ln{display:inline-block;width:2.4em;color:var(--purple-deep);opacity:.5}
@@ -114,6 +114,23 @@ pre.code .ln{display:inline-block;width:2.4em;color:var(--purple-deep);opacity:.
 .vs.b p em{color:var(--red)}
 .vs.a p em{color:var(--green)}
 .arrow{display:grid;place-items:center;font:900 64px var(--sans)}
+
+/* screen: the app's own screenshot in a browser window, callouts beside it */
+.k-screen .eyebrow{top:112px}
+.k-screen .heading{top:146px}
+.k-screen .body{bottom:112px}
+.shotwrap{display:flex;gap:40px;width:100%;height:100%;align-items:center;justify-content:center}
+.window{flex:none;display:flex;flex-direction:column;overflow:hidden}
+.window .bar span{font-weight:500;padding:4px 18px;border:calc(var(--line-w) * .7) solid var(--line);border-radius:var(--r-chip);background:var(--card);color:var(--ink-2)}
+.view{position:relative;overflow:hidden;background:#fff}
+.shot{position:absolute;left:0;top:0;transform-origin:0 0;--k:1}
+.shot img{display:block;width:100%;height:100%}
+.hl{position:absolute;border:calc(5px * var(--k)) solid var(--purple-deep);border-radius:calc(12px * var(--k));box-shadow:0 0 0 calc(6000px * var(--k)) rgba(16,10,26,.16);transform-origin:50% 50%}
+.hl b,.callouts .num{display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:var(--purple-deep);color:#fff;font:800 24px var(--sans);font-style:normal}
+.hl b{position:absolute;left:calc(-18px * var(--k));top:calc(-18px * var(--k));width:calc(36px * var(--k));height:calc(36px * var(--k));font-size:calc(20px * var(--k))}
+.shotwrap .callouts{flex:0 0 420px;align-content:center;--s:1}
+.shotwrap .callouts>.card{position:relative}
+.callouts .num{position:absolute;left:-22px;top:-18px}
 
 /* checklist */
 .checkcard{width:100%;max-width:1440px;padding:calc(40px * var(--s)) 48px;display:grid;gap:calc(30px * var(--s))}

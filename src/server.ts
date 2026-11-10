@@ -4,12 +4,13 @@ import { createReadStream, existsSync, readdirSync, readFileSync, statSync } fro
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkReach, MAX_SHOTS, parseAppSpec } from "./capture.ts";
 import { DEFAULT_MODEL, MINUTES, type Minutes } from "./config.ts";
 import { money, readCost } from "./cost.ts";
 import { runJob, type Job, type JobResult, type Progress } from "./pipeline.ts";
 import { CACHE_DIR } from "./config.ts";
 import { listThemes, loadTheme, parseThemeSpec } from "./theme.ts";
-import { authUrl, disconnect, draft, filmPosts, finishSignIn, forBrowser, recordPost, SignInError, uploadVideo, youtubeConfig, youtubeStatus, type Privacy, type YouTubeConfig } from "./youtube.ts";
+import { authUrl, cutOf, disconnect, draft, filmPosts, finishSignIn, forBrowser, recordPost, SignInError, uploadVideo, youtubeConfig, youtubeStatus, type Privacy, type YouTubeConfig } from "./youtube.ts";
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
 const OUT = resolve("out");
@@ -94,7 +95,7 @@ const runs = new Map<string, Run>();
 let queue: Promise<void> = Promise.resolve();
 
 const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-  ".json": "application/json", ".mp4": "video/mp4", ".srt": "text/plain; charset=utf-8", ".vtt": "text/vtt; charset=utf-8", ".png": "image/png", ".wav": "audio/wav" };
+  ".json": "application/json", ".mp4": "video/mp4", ".srt": "text/plain; charset=utf-8", ".vtt": "text/vtt; charset=utf-8", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".wav": "audio/wav" };
 
 /** A path inside `root`, or null if the request tries to climb out of it. */
 function inside(root: string, rel: string): string | null {
@@ -214,10 +215,10 @@ function sendFile(req: IncomingMessage, res: ServerResponse, file: string) {
 
 const json = (res: ServerResponse, code: number, body: unknown) => { res.writeHead(code, { "content-type": "application/json" }).end(JSON.stringify(body)); };
 
-async function readBody(req: IncomingMessage): Promise<any> {
+async function readBody(req: IncomingMessage, max = 2_000_000): Promise<any> {
   let size = 0;
   const chunks: Buffer[] = [];
-  for await (const c of req) { size += c.length; if (size > 2_000_000) throw new Error("too large"); chunks.push(c); }
+  for await (const c of req) { size += c.length; if (size > max) throw new Error(max > 2_000_000 ? "That's too much to send at once: use fewer or smaller screenshots." : "too large"); chunks.push(c); }
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
 }
 
@@ -234,6 +235,20 @@ function toJob(b: any): Job {
   if (b.plan && typeof b.plan === "object") job.plan = b.plan;
   if (typeof b.theme === "string" && parseThemeSpec(b.theme)) job.theme = b.theme;
   if (b.themeMode === "light" || b.themeMode === "dark") job.themeMode = b.themeMode;
+  // the app's screens: an address this machine can open (a server others reach can't open the user's localhost), or pictures
+  job.privateApp = LOCAL;
+  if (typeof b.app === "string" && b.app.trim()) {
+    job.app = b.app.trim().slice(0, 2000);
+    checkReach(parseAppSpec(job.app), LOCAL);
+  }
+  if (Array.isArray(b.shots) && b.shots.length) {
+    if (b.shots.length > MAX_SHOTS) throw new Error(`Up to ${MAX_SHOTS} screenshots at a time.`);
+    job.shots = b.shots.map((s: any) => {
+      const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(s?.data ?? ""));
+      if (!m) throw new Error("Screenshots have to be PNG, JPEG or WebP pictures.");
+      return { name: String(s?.name ?? "").replace(/[^\w. -]/g, "").slice(0, 80) || `screenshot.${m[1]}`, data: Buffer.from(m[2], "base64") };
+    });
+  }
   if (typeof b.dir === "string" && b.dir) {
     const d = inside(OUT, b.dir);
     if (!d || d === OUT) throw new Error("bad folder");
@@ -318,8 +333,9 @@ const server = createServer(async (req, res) => {
       const meta = { title: String(b.title ?? ""), description: String(b.description ?? ""), privacy };
       const run = enqueue("upload", async (report) => {
         report({ stage: "upload", message: "Uploading to YouTube", fraction: 0 });
+        const cut = cutOf(video);  // the cut being sent, noted before the upload starts
         const posted = await uploadVideo(me, video, meta, (f) => report({ stage: "upload", message: `${Math.round(f * 100)}% uploaded`, fraction: f }));
-        recordPost(d, posted, youtubeStatus(me).email);
+        recordPost(d, posted, youtubeStatus(me).email, cut);
         return posted;
       });
       return json(res, 202, { id: run.id });
@@ -334,7 +350,7 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "POST" && path === "/api/runs") {
       if (!(req.headers["content-type"] ?? "").startsWith("application/json")) return json(res, 415, { error: "JSON only" });
-      const b = await readBody(req);
+      const b = await readBody(req, 48_000_000);  // room for uploaded screenshots
       const kind = b.kind === "film" ? "film" : "storyboard";
       const job = toJob(b);
       if (!job.repo && !job.plan) return json(res, 400, { error: "Give a repo." });

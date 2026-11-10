@@ -1,7 +1,8 @@
 // Repo (and script) in, film out: read, write the storyboard, speak, mix, film.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { captureApp, importShots, parseAppSpec, type Screen } from "./capture.ts";
 import { CACHE_DIR, DEFAULT_MODEL, FPS, type Minutes, RENDER, TRANSITION, WPM, WRITER_PRICES } from "./config.ts";
 import { addSpend, costLine, recordCost, zero, type FilmCost, type RunCost, type Spend } from "./cost.ts";
 import { computeCues, sfxEvents } from "./cues.ts";
@@ -39,6 +40,14 @@ export interface Job {
   workers?: number;
   outDir?: string;
   stills?: number[];
+  /** The app, running: its address, then any pages to take in order, as in "http://localhost:5173 /dashboard". */
+  app?: string;
+  /** Screenshots of the app, uploaded or read from disk. */
+  shots?: { name: string; data: Buffer }[];
+  /** Whether `app` may be a private address such as localhost: yes on your own machine, no on a server others reach. */
+  privateApp?: boolean;
+  /** Where a storyboard given as `plan` came from, so its screenshots can be found. */
+  planDir?: string;
 }
 
 export interface JobResult {
@@ -96,6 +105,14 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
     if (job.plan) {
       plan = validatePlanShape(job.plan);
       dir = resolve(job.outDir ?? join("out", `${slug(plan.title)}-${clampMinutes(planWords(plan) / WPM)}min`));
+      // a screen scene's picture lives beside the storyboard; one filmed into another folder brings its pictures along
+      for (const src of new Set(plan.beats.flatMap((b) => b.scenes).flatMap((s) => (s.screen ? [s.screen.src] : [])))) {
+        if (existsSync(join(dir, src))) continue;
+        const from = job.planDir ? join(job.planDir, src) : "";
+        if (!from || !existsSync(from)) throw new Error(`The storyboard shows the screenshot ${src}, which isn't in ${dir}.`);
+        mkdirSync(dirname(join(dir, src)), { recursive: true });
+        copyFileSync(from, join(dir, src));
+      }
     } else {
       if (!job.repo) throw new Error("Give a repo: owner/name, a GitHub URL or a folder.");
       const key = requireKey("ANTHROPIC_API_KEY");
@@ -123,10 +140,25 @@ export async function runJob(job: Job, report: (p: Progress) => void = () => {})
         minutes = clampMinutes(est);
       }
       dir = resolve(job.outDir ?? join("out", `${slug(context.name)}-${minutes}min`));  // known before anything is paid for
+
+      // the app's own screens, taken before the writer is paid, so an app that isn't running costs nothing
+      const screens: Screen[] = [];
+      const app = job.app ? parseAppSpec(job.app) : undefined;
+      if (app || job.shots?.length) {
+        rmSync(join(dir, "screens"), { recursive: true, force: true });  // the last run's pictures make way
+        if (app) {
+          const got = await captureApp(app, { dir, allowPrivate: job.privateApp ?? true, log: (m) => report({ stage: "repo", message: m }) });
+          screens.push(...got.screens);
+          warnings.push(...got.warnings);
+        }
+        if (job.shots?.length) screens.push(...(await importShots(job.shots, dir, screens.length)));
+        report({ stage: "repo", message: `${screens.length} ${screens.length === 1 ? "screenshot" : "screenshots"} of the app` });
+      }
       const model = job.model || DEFAULT_MODEL;
       report({ stage: "storyboard", message: `Writing the storyboard with ${model}` });
       const res = await makePlan(
-        { context, minutes, script, scriptHeadings, scriptNotes, adapt: job.adapt ? job.script : undefined, brief: job.brief },
+        { context, minutes, script, scriptHeadings, scriptNotes, adapt: job.adapt ? job.script : undefined, brief: job.brief,
+          screens: screens.map((sc) => ({ ...sc, data: readFileSync(join(dir!, sc.file)).toString("base64") })), app: app?.start },
         async (system, messages) => {
           const { text, usage } = await chat({ key, model, system, messages });
           const exact = usage.cost !== undefined;

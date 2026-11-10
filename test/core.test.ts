@@ -357,7 +357,7 @@ test("youtube: PKCE, the sign-in link, and swapping the code for tokens", async 
   const cfg = youtubeConfig("http://localhost:4319/", mkdtempSync(join(tmpdir(), "vg-yt-")))!;
   assert.equal(cfg.redirectUri, "http://localhost:4319/youtube/callback");
   const u = new URL(authUrl(cfg).url);
-  assert.equal(u.searchParams.get("scope"), "openid email https://www.googleapis.com/auth/youtube.upload");
+  assert.equal(u.searchParams.get("scope"), process.env.GOOGLE_ALLOWED_EMAIL?.trim() ? "openid email https://www.googleapis.com/auth/youtube.upload" : "https://www.googleapis.com/auth/youtube.upload");
   assert.equal(u.searchParams.get("code_challenge_method"), "S256");
   assert.equal(u.searchParams.get("access_type"), "offline");
   const state = u.searchParams.get("state")!;
@@ -511,4 +511,42 @@ test("youtube: a film remembers where it was posted", async () => {
   assert.deepEqual(posts.map((p) => [p.url, p.channel]), [["https://youtu.be/abc123def45", undefined], ["https://youtu.be/zzz999yyy88", "Second Channel"]]);
   assert.equal(posts[1].studio, "https://studio.youtube.com/video/zzz999yyy88/edit");
   assert.equal(JSON.parse(readFileSync(join(dir, "youtube.json"), "utf8")).posts.length, 2);
+});
+
+test("youtube: a re-filmed film starts unposted, old posts kept but not shown", async () => {
+  const { recordPost, filmPosts, cutOf } = await import("../src/youtube.ts");
+  const { utimesSync, writeFileSync: write } = await import("node:fs");
+  const dir = mkdtempSync(join(tmpdir(), "vg-cut-"));
+  const video = join(dir, "film-2min.mp4");
+  const at = (iso: string) => { const t = new Date(iso); utimesSync(video, t, t); };
+  write(video, "first cut");
+  at("2026-11-10T09:00:00Z");
+  // a post from before cuts were recorded: it went up after this video was written, so it's of this cut
+  write(join(dir, "youtube.json"), JSON.stringify({ posts: [{ id: "oldpost0001", privacy: "unlisted", at: "2026-11-10T09:17:00Z" }] }));
+  assert.deepEqual(filmPosts(dir).map((p) => p.id), ["oldpost0001"]);
+  recordPost(dir, { id: "newpost0002", url: "", studio: "", privacy: "private", requested: "private" }, undefined, cutOf(video));
+  assert.deepEqual(filmPosts(dir).map((p) => p.id), ["oldpost0001", "newpost0002"]);
+
+  write(video, "second cut, longer");  // re-filmed into the same folder
+  at("2026-11-10T14:49:00Z");
+  assert.deepEqual(filmPosts(dir), []);
+  assert.equal(JSON.parse(readFileSync(join(dir, "youtube.json"), "utf8")).posts.length, 2, "the earlier posts stay on record");
+  recordPost(dir, { id: "thirdpost03", url: "", studio: "", privacy: "unlisted", requested: "unlisted" }, undefined, cutOf(video));
+  assert.deepEqual(filmPosts(dir).map((p) => p.id), ["thirdpost03"]);
+});
+
+test("youtube: the sign-in asks only to upload, unless an allowed email has to be checked", async () => {
+  const { authUrl, scopes } = await import("../src/youtube.ts");
+  const cfg = { clientId: "id", clientSecret: "s", redirectUri: "http://localhost:4319/youtube/callback", tokenFile: "/nonexistent" } as any;
+  const before = process.env.GOOGLE_ALLOWED_EMAIL;
+  try {
+    delete process.env.GOOGLE_ALLOWED_EMAIL;
+    const q = new URL(authUrl(cfg).url).searchParams;
+    assert.equal(q.get("scope"), "https://www.googleapis.com/auth/youtube.upload");
+    assert.equal(q.get("include_granted_scopes"), null);
+    process.env.GOOGLE_ALLOWED_EMAIL = "me@example.com";
+    assert.deepEqual(scopes(), ["openid", "email", "https://www.googleapis.com/auth/youtube.upload"]);
+  } finally {
+    if (before === undefined) delete process.env.GOOGLE_ALLOWED_EMAIL; else process.env.GOOGLE_ALLOWED_EMAIL = before;
+  }
 });

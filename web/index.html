@@ -31,6 +31,16 @@
         <div class="seg small" id="mode" hidden><button type="button" data-v="keep" class="on">Keep my words</button><button type="button" data-v="fit">Fit to length</button></div>
       </div>
     </div>
+    <div class="field">
+      <span>App screens <em>optional</em></span>
+      <input id="app" placeholder="http://localhost:5173, with your app running" spellcheck="false">
+      <div class="row">
+        <label class="link">Add screenshots<input type="file" id="shotfiles" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
+        <span class="meta" id="shotlist" hidden></span>
+        <button type="button" class="link plain" id="shotclear" hidden>Clear</button>
+      </div>
+      <p class="meta">Start your app, then give its address. Pages after it, such as <code>/dashboard /settings</code>, are taken in that order; without them it follows the app's own links, up to 8 pages.</p>
+    </div>
     <label class="field"><span>Direction <em>optional</em></span>
       <input id="brief" placeholder="e.g. for a hiring manager">
     </label>

@@ -1,10 +1,10 @@
 // Posting a film to YouTube: Google sign-in (OAuth 2.0 with PKCE), then a resumable upload through the YouTube Data API.
-// Each browser connects its own Google account and posts to its own channel. Scopes are only "upload videos" plus the
-// account's email, to show who is connected. Tokens stay in files on the server (mode 600, git-ignored, one per
+// Each browser connects its own Google account and posts to its own channel. The only scope is "upload videos" (plus the
+// account's email when GOOGLE_ALLOWED_EMAIL has to check it). Tokens stay in files on the server (mode 600, git-ignored, one per
 // browser), are never logged and never reach the page.
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { Plan } from "./plan.ts";
 import type { Timing } from "./timing.ts";
 
@@ -12,7 +12,11 @@ const AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN = "https://oauth2.googleapis.com/token";
 const REVOKE = "https://oauth2.googleapis.com/revoke";
 const UPLOAD = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status";
-const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/youtube.upload"];
+const UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload";
+/** "Upload videos" alone. Asking for the email as well can make Google fail (a bare 500) at its "choose an account or
+ *  channel" step when the channel is a Brand Account, which has no email; so the email is asked for only when
+ *  GOOGLE_ALLOWED_EMAIL needs it. */
+export const scopes = (): string[] => (process.env.GOOGLE_ALLOWED_EMAIL?.trim() ? ["openid", "email", UPLOAD_SCOPE] : [UPLOAD_SCOPE]);
 const CHUNK = 8 * 1024 * 1024;  // a multiple of 256 KiB, as resumable uploads require
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -46,8 +50,8 @@ export function authUrl(cfg: YouTubeConfig): { url: string; state: string } {
   const state = b64url(randomBytes(24)), verifier = b64url(randomBytes(48));
   pending.set(state, { verifier, at: Date.now() });
   const q = new URLSearchParams({
-    client_id: cfg.clientId, redirect_uri: cfg.redirectUri, response_type: "code", scope: SCOPES.join(" "),
-    access_type: "offline", prompt: "consent", include_granted_scopes: "true",
+    client_id: cfg.clientId, redirect_uri: cfg.redirectUri, response_type: "code", scope: scopes().join(" "),
+    access_type: "offline", prompt: "consent",  // no include_granted_scopes: an earlier sign-in's email scope stays out
     state, code_challenge: pkceChallenge(verifier), code_challenge_method: "S256",
   });
   return { url: `${AUTH}?${q}`, state };
@@ -184,20 +188,38 @@ export interface Posted {
   channel?: string;
 }
 
-/** Every post of a film is kept in its folder, so the film shows its YouTube link from then on. */
-export function recordPost(dir: string, posted: Posted, as?: string): void {
+/** Which cut of a film a video file is: its name and when it was written. Re-filming or re-theming writes a new cut. */
+export interface Cut { video: string; filmed: number }
+export const cutOf = (video: string): Cut => ({ video: basename(video), filmed: Math.round(statSync(video).mtimeMs) });
+
+/** The film as it is now: the newest video in its folder (an older cut can linger under another length's name). */
+function currentCut(dir: string): Cut | null {
+  let mp4: string[] = [];
+  try { mp4 = readdirSync(dir).filter((f) => f.endsWith(".mp4")).map((f) => join(dir, f)); } catch {}
+  const newest = mp4.map(cutOf).sort((a, b) => b.filmed - a.filmed)[0];
+  return newest ?? null;
+}
+
+/** Every post of a film is kept in its folder, with the cut it uploaded, so the film shows its YouTube link while it's that cut. */
+export function recordPost(dir: string, posted: Posted, as?: string, cut?: Cut): void {
   const file = join(dir, "youtube.json");
   let posts: unknown[] = [];
   try { posts = JSON.parse(readFileSync(file, "utf8")).posts ?? []; } catch {}
-  writeFileSync(file, JSON.stringify({ posts: [...posts, { ...posted, as, at: new Date().toISOString() }] }, null, 2));
+  writeFileSync(file, JSON.stringify({ posts: [...posts, { ...posted, ...cut, as, at: new Date().toISOString() }] }, null, 2));
 }
 
-/** Every post of the film, oldest first: one for each channel it went to. */
+/** A post is of this cut if it says so, or (for a post recorded before cuts were) if it went up after this video was written. */
+const ofCut = (p: any, now: Cut) =>
+  typeof p.filmed === "number" ? p.video === now.video && p.filmed === now.filmed : !p.at || Date.parse(p.at) >= now.filmed;
+
+/** The posts of the film as it is now, oldest first: one for each channel it went to. Posts of an earlier cut stay in
+ *  youtube.json but aren't this film's: re-filming into the same folder starts it unposted. */
 export function filmPosts(dir: string): (Posted & { at?: string })[] {
   let posts: unknown;
   try { posts = JSON.parse(readFileSync(join(dir, "youtube.json"), "utf8")).posts; } catch { return []; }
   if (!Array.isArray(posts)) return [];
-  return posts.filter((p) => p && /^[\w-]{6,20}$/.test(p.id)).map((p) => ({
+  const now = currentCut(dir);
+  return posts.filter((p) => p && /^[\w-]{6,20}$/.test(p.id) && (!now || ofCut(p, now))).map((p) => ({
     id: p.id, url: `https://youtu.be/${p.id}`, studio: `https://studio.youtube.com/video/${p.id}/edit`,
     privacy: String(p.privacy), requested: p.requested, channel: typeof p.channel === "string" && p.channel ? p.channel : undefined, at: p.at,
   }));

@@ -82,6 +82,24 @@
         '<div class="arrow"' + at(Math.max(c.items[0] + 0.2, c.items[1] - 0.25)) + ">→</div>" +
         '<div class="card vs a"' + at(c.items[1], "stamp") + '><div class="lab"><i>✓</i>' + flat(a.tag || "After") + "</div><p>" + rich(a.title) + "</p></div></div>";
     },
+    screen: function (s, c) {
+      var sh = s.screen, url = (sh.url || "").replace(/^https?:\/\//, "").replace(/\/$/, "") || sh.title || "";
+      var boxed = s.items.map(function (it, i) { return it.box ? i : -1; }).filter(function (i) { return i >= 0; });
+      var hls = boxed.map(function (i, n) {
+        var b = s.items[i].box, next = boxed[n + 1], m = Math.round(sh.w / 200);  // a little room around what's pointed at
+        return '<div class="hl" style="left:' + (b[0] - m) + "px;top:" + (b[1] - m) + "px;width:" + (b[2] + 2 * m) + "px;height:" + (b[3] + 2 * m) + 'px"' + at(c.items[i], "hl") +
+          (next !== undefined ? ' data-until="' + (c.items[next] - 0.3).toFixed(3) + '"' : "") + "><b>" + (n + 1) + "</b></div>";
+      }).join("");
+      var calls = s.items.map(function (it, i) {
+        var n = boxed.indexOf(i);
+        return '<div class="card"' + at(c.items[i]) + ">" + (n >= 0 ? '<b class="num">' + (n + 1) + "</b>" : "") +
+          (it.tag ? '<div class="tag">' + flat(it.tag) + "</div>" : "") + '<div class="t">' + flat(it.title) + "</div>" +
+          (it.text ? '<div class="x">' + flat(it.text) + "</div>" : "") + "</div>";
+      }).join("");
+      return '<div class="shotwrap"><div class="card window"' + at(c.body) + '><div class="bar"><i></i><i></i><i></i><span>' + esc(url) + "</span></div>" +
+        '<div class="view"><div class="shot" style="width:' + sh.w + "px;height:" + sh.h + 'px"><img src="' + esc(sh.src) + '" alt="">' + hls + "</div></div></div>" +
+        (calls ? '<div class="callouts">' + calls + "</div>" : "") + "</div>";
+    },
     checklist: function (s, c) {
       return '<div class="card checkcard"' + at(c.body) + ">" + s.items.map(function (it, i) {
         return '<div class="check"' + at(c.items[i]) + '><div class="box"' + at(c.items[i] + 0.45, "tick") + ">✓</div><div>" +
@@ -117,9 +135,9 @@
     for (var v = from; v >= to; v -= step) { el.style.setProperty(prop, v + unit); if (!overflows()) return; }
   }
 
-  function layout(slide, kind) {
+  function layout(slide, kind, i) {
     var h = slide.querySelector(".heading");
-    var base = kind === "title" ? 128 : kind === "statement" ? 96 : 84, lines = kind === "statement" ? 3 : 2;
+    var base = kind === "title" ? 128 : kind === "statement" ? 96 : kind === "screen" ? 64 : 84, lines = kind === "statement" ? 3 : kind === "screen" ? 1 : 2;
     shrink(h, "--hs", base, 44, 4, "px", function () { return h.offsetHeight > parseFloat(h.style.getPropertyValue("--hs")) * 1.14 * lines; });
     if (kind === "title" || kind === "statement") {
       var hero = slide.querySelector(".hero");
@@ -127,8 +145,9 @@
       return;
     }
     var body = slide.querySelector(".body");
-    body.style.top = Math.min(h.offsetTop + h.offsetHeight + 60, 560) + "px";
+    body.style.top = Math.min(h.offsetTop + h.offsetHeight + (kind === "screen" ? 36 : 60), 560) + "px";
     var tooBig = function () { return body.scrollHeight > body.clientHeight + 1; };
+    if (kind === "screen") return fitScreen(body, i);
     if (kind === "code") {
       // Size the code so the line at the 80th percentile of length fits; longer lines end in an ellipsis.
       var pre = body.querySelector("pre"), card = body.querySelector(".codecard"), cl = pre.querySelectorAll(".cl");
@@ -140,6 +159,48 @@
     }
     shrink(body, "--s", 1, 0.55, 0.04, "", tooBig);
     if (kind === "flow") drawWires(slide, body);
+  }
+
+  // ---------- screen scenes: a screenshot in a browser window, the camera moving onto what's being talked about ----------
+
+  var shots = [];  // per scene: the view's size, the picture's, and where the camera is at each moment
+  function fitScreen(body, i) {
+    var sc = scenes[i].s, sh = sc.screen, call = body.querySelector(".callouts"), win = body.querySelector(".window");
+    var view = win.querySelector(".view"), bar = win.querySelector(".bar"), edge = win.offsetWidth - win.clientWidth;
+    if (call) shrink(call, "--s", 1, 0.6, 0.04, "", function () { return call.scrollHeight > body.clientHeight + 1; });
+    var availW = body.clientWidth - (call ? call.offsetWidth + 40 : 0) - edge, availH = body.clientHeight - bar.offsetHeight - edge;
+    var phone = sh.w <= 1300 && sh.h / sh.w >= 1.6 && sh.h / sh.w <= 2.4;  // a phone's screen is shown whole; a web page fills the width
+    var aspect = phone ? sh.w / sh.h : Math.max(sh.w / sh.h, 16 / 10);
+    var vw = Math.min(availW, availH * aspect), vh = vw / aspect;
+    view.style.width = vw + "px"; view.style.height = vh + "px";
+    var g = { vw: vw, vh: vh, iw: sh.w, ih: sh.h, s0: phone ? vh / sh.h : vw / sh.w, el: view.firstElementChild };
+    g.max = Math.max(g.s0, Math.min(g.s0 * 2.2, 1));  // close enough to read, never so close the pixels show
+    shots[i] = g;
+  }
+  var span = function (v, lo, hi) { return lo > hi ? (lo + hi) / 2 : Math.min(Math.max(v, lo), hi); };
+  function frameOn(g, b) {
+    var pad = Math.max(0.03 * g.iw, 0.25 * Math.max(b[2], b[3]));
+    var s = Math.max(g.s0, Math.min(g.max, g.vw / (b[2] + 2 * pad), g.vh / (b[3] + 2 * pad)));
+    return { s: s, x: span(g.vw / 2 - (b[0] + b[2] / 2) * s, g.vw - g.iw * s, 0), y: span(g.vh / 2 - (b[1] + b[3] / 2) * s, g.vh - g.ih * s, 0) };
+  }
+  /** The camera's moves for scene i: onto each callout's region as it appears, or down a page taller than the window. */
+  function planCamera(i) {
+    var g = shots[i], c = cues[i], sc = scenes[i].s;
+    var rest = { s: g.s0, x: span(0, g.vw - g.iw * g.s0, 0), y: 0 }, moves = [];
+    sc.items.forEach(function (it, k) { if (it.box) moves.push({ t: c.items[k] - 0.45, to: frameOn(g, it.box) }); });
+    if (!moves.length && g.ih * g.s0 > g.vh + 4) moves.push({ t: c.body + 1.4, dur: Math.max(2, c.end - c.body - 3.2), to: { s: g.s0, x: rest.x, y: g.vh - g.ih * g.s0 } });
+    moves.forEach(function (m, k) { if (!m.dur) m.dur = Math.min(1.0, moves[k + 1] ? Math.max(0.3, moves[k + 1].t - m.t) : 1.0); });
+    g.rest = rest; g.moves = moves;
+  }
+  function camera(g, t) {
+    var p = g.rest;
+    g.moves.forEach(function (m) {
+      if (t <= m.t) return;
+      var q = inOut(clamp((t - m.t) / m.dur));
+      p = { s: p.s + (m.to.s - p.s) * q, x: p.x + (m.to.x - p.x) * q, y: p.y + (m.to.y - p.y) * q };
+    });
+    g.el.style.transform = "translate(" + p.x.toFixed(2) + "px," + p.y.toFixed(2) + "px) scale(" + p.s.toFixed(5) + ")";
+    g.el.style.setProperty("--k", (1 / p.s).toFixed(4));
   }
 
   function drawWires(slide, body) {
@@ -166,7 +227,7 @@
   function collect() {
     groups = slides.map(function (slide) {
       return Array.prototype.slice.call(slide.querySelectorAll("[data-t]")).map(function (el) {
-        var o = { el: el, t: +el.dataset.t, anim: el.dataset.anim || "pop" };
+        var o = { el: el, t: +el.dataset.t, anim: el.dataset.anim || "pop", until: el.dataset.until ? +el.dataset.until : 0 };
         if (o.anim === "draw") { o.len = el.getTotalLength(); el.style.strokeDasharray = o.len; }
         return o;
       });
@@ -182,6 +243,12 @@
     if (o.anim === "type") {
       p = outCubic(clamp((t - o.t) / 0.25));
       el.style.opacity = p; el.style.transform = "translateX(" + (1 - p) * 8 + "px)"; return;
+    }
+    if (o.anim === "hl") {
+      p = clamp((t - o.t) / 0.4);
+      var gone = o.until ? clamp((t - o.until) / 0.35) : 0;
+      el.style.opacity = outCubic(p) * (1 - gone);
+      el.style.transform = "scale(" + (1.06 - 0.06 * outCubic(p)) + ")"; return;
     }
     if (o.anim === "tick") {
       p = clamp((t - o.t) / 0.3);
@@ -218,6 +285,7 @@
       }
       el.style.opacity = op; el.style.transform = tx;
       cam.style.transform = "scale(" + (1 + 0.028 * clamp((t - c.start) / ((to - c.start) || 1))) + ")";
+      if (shots[k]) camera(shots[k], t);
       groups[k].forEach(function (o) { animate(o, t); });
     });
     beatSpan.forEach(function (sp, b) {
@@ -246,8 +314,13 @@
     });
   };
 
-  document.fonts.ready.then(function () {
-    slides.forEach(function (slide, i) { layout(slide, scenes[i].s.kind); });
+  // every screenshot decoded before the first frame, or the film would show it arriving
+  var pictures = Array.prototype.map.call(host.querySelectorAll(".shot img"), function (img) {
+    return img.decode().catch(function () { throw new Error("A screenshot didn't load: " + img.getAttribute("src")); });
+  });
+  Promise.all([document.fonts.ready].concat(pictures)).then(function () {
+    slides.forEach(function (slide, i) { layout(slide, scenes[i].s.kind, i); });
+    shots.forEach(function (g, i) { if (g) planCamera(i); });
     collect();
     window.seek(0);
     window.STAGE_READY = true;

@@ -8,7 +8,7 @@
     return realFetch(url, opts).then(function (r) { if (r.status === 401) location.href = "/login"; return r; });
   };
   var WPM = 146, ORDER = ["repo", "storyboard", "voice", "sound", "render"];
-  var S = { minutes: 2, voice: "gemini", mode: "keep", theme: "gitdiagram", tmode: "light", plan: null, dir: null, busy: false, key: true };
+  var S = { minutes: 2, voice: "gemini", mode: "keep", theme: "gitdiagram", tmode: "light", plan: null, dir: null, busy: false, key: true, shots: [] };
   var GITDIAGRAM = { vars: { "--paper": "#f2e8ff", "--card": "#fdfaff", "--ink": "#17111f", "--purple": "#bd85fb", "--purple-soft": "#dcc2ff", "--purple-deep": "#7a2be0" }, fonts: { sans: "Geist" } };
 
   // ---------- remembered inputs ----------
@@ -16,7 +16,7 @@
     get: function () { try { return JSON.parse(localStorage.getItem("videogen") || "{}"); } catch (e) { return {}; } },
     set: function (v) { try { localStorage.setItem("videogen", JSON.stringify(v)); } catch (e) {} },
   };
-  function remember() { store.set({ repo: $("#repo").value, brief: $("#brief").value, minutes: S.minutes, voice: S.voice, theme: S.theme, tmode: S.tmode }); }
+  function remember() { store.set({ repo: $("#repo").value, app: $("#app").value, brief: $("#brief").value, minutes: S.minutes, voice: S.voice, theme: S.theme, tmode: S.tmode }); }
 
   // ---------- segmented controls ----------
   function seg(id, key, after) {
@@ -39,11 +39,27 @@
   var saved = store.get();
   if (saved.repo) $("#repo").value = saved.repo;
   if (saved.brief) $("#brief").value = saved.brief;
+  if (saved.app) $("#app").value = saved.app;
   if (saved.minutes) { S.minutes = saved.minutes; pick("minutes", saved.minutes); }
   if (saved.voice) { S.voice = saved.voice; pick("voice", saved.voice); }
   if (saved.tmode) { S.tmode = saved.tmode; pick("tmode", saved.tmode); }
   var savedTheme = saved.theme;  // used once the list confirms it still exists
-  ["repo", "brief"].forEach(function (id) { $("#" + id).addEventListener("change", remember); });
+  ["repo", "brief", "app"].forEach(function (id) { $("#" + id).addEventListener("change", remember); });
+
+  // ---------- the app's screens: uploaded pictures, read here and sent with the run ----------
+  function shotsChanged() {
+    var n = S.shots.length;
+    $("#shotlist").textContent = n ? n + (n === 1 ? " screenshot: " : " screenshots: ") + S.shots.map(function (s) { return s.name; }).join(", ") : "";
+    $("#shotlist").hidden = $("#shotclear").hidden = !n;
+  }
+  $("#shotfiles").addEventListener("change", function (e) {
+    var files = Array.prototype.slice.call(e.target.files).slice(0, 12 - S.shots.length);
+    e.target.value = "";
+    Promise.all(files.map(function (f) {
+      return new Promise(function (ok, fail) { var r = new FileReader(); r.onload = function () { ok({ name: f.name, data: r.result }); }; r.onerror = fail; r.readAsDataURL(f); });
+    })).then(function (read) { S.shots = S.shots.concat(read); shotsChanged(); });
+  });
+  $("#shotclear").addEventListener("click", function () { S.shots = []; shotsChanged(); });
 
   var script = $("#script");
   function scriptChanged() { $("#mode").hidden = !script.value.trim(); }
@@ -152,6 +168,8 @@
   function formBody(kind) {
     var b = { kind: kind, repo: $("#repo").value.trim(), minutes: S.minutes, voice: S.voice, brief: $("#brief").value.trim(), theme: S.theme, themeMode: S.tmode };
     if (script.value.trim()) { b.script = script.value; b.adapt = S.mode === "fit"; }
+    if ($("#app").value.trim()) b.app = $("#app").value.trim();
+    if (S.shots.length) b.shots = S.shots;
     return b;
   }
 
@@ -200,6 +218,12 @@
         var items = (s.items || []).map(function (it) { return it.title; });
         if (s.code && s.code.file) items.unshift(s.code.file);
         if (items.length) { var row = el("div", "items"); items.forEach(function (t) { row.appendChild(el("span", null, t)); }); c.appendChild(row); }
+        if (s.screen && dir) {
+          var pic = el("img", "thumb");
+          pic.src = "/files/" + dir.split("/").map(encodeURIComponent).join("/") + "/" + s.screen.src.split("/").map(encodeURIComponent).join("/");
+          pic.alt = s.screen.title || s.screen.src;
+          c.appendChild(pic);
+        }
         sec.appendChild(c);
       });
       host.appendChild(sec);

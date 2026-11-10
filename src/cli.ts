@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // videogen on the command line.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { MINUTES, type Minutes } from "./config.ts";
 import { loadEnv } from "./env.ts";
@@ -15,6 +16,9 @@ const HELP = `videogen: turn a repo into a 1 to 4 minute narrated explainer film
   --script <file>       your narration, kept word for word. Markdown headings hint where chapters go.
   --adapt               fit --script to --minutes instead of keeping every word
   --brief <text>        direction for the writer, such as "for a hiring manager"
+  --app <url> [pages]   your app, running: its screenshots go in the film, e.g. --app "localhost:5173 /dashboard".
+                        Without pages it follows the app's own links, up to 8 pages.
+  --shots <file|dir>    screenshots of the app (PNG, JPEG or WebP) to use as well; repeat for more
   --theme <name|link>   a 21st.dev community theme, e.g. vintage-paper (default: gitdiagram)
   --mode light|dark     the theme's light or dark version (default light)
   --themes              list the 21st.dev themes
@@ -36,6 +40,7 @@ const { values: a } = parseArgs({
     from: { type: "string" }, stills: { type: "string" }, out: { type: "string" }, fps: { type: "string" },
     workers: { type: "string" }, env: { type: "string", multiple: true }, serve: { type: "boolean" }, help: { type: "boolean", short: "h" },
     theme: { type: "string" }, mode: { type: "string" }, themes: { type: "boolean" },
+    app: { type: "string" }, shots: { type: "string", multiple: true },
   },
 });
 
@@ -66,6 +71,15 @@ if (a.serve) {
   const workers = a.workers === undefined ? undefined : Number(a.workers);
   if (workers !== undefined && !(Number.isInteger(workers) && workers >= 1 && workers <= 8)) fail("--workers takes 1 to 8.");
 
+  const PICTURE = /\.(png|jpe?g|webp)$/i;
+  const shots = (a.shots ?? []).flatMap((p) => {
+    try {
+      if (statSync(p).isDirectory()) return readdirSync(p).filter((f) => PICTURE.test(f)).sort().map((f) => join(p, f));
+    } catch { fail(`${p} doesn't exist.`); }
+    if (!PICTURE.test(p)) fail(`${p} isn't a PNG, JPEG or WebP picture.`);
+    return [p];
+  }).map((f) => ({ name: basename(f), data: readFileSync(f) }));
+
   let last = "", decile = -1;
   const tty = process.stdout.isTTY;
   const report = (p: Progress) => {
@@ -88,6 +102,9 @@ if (a.serve) {
       adapt: a.adapt,
       brief: a.brief,
       plan: a.from ? JSON.parse(readFileSync(a.from, "utf8")) : undefined,
+      planDir: a.from ? dirname(resolve(a.from)) : undefined,
+      app: a.app,
+      shots: shots.length ? shots : undefined,
       storyboardOnly: a["storyboard-only"],
       voice: a.voice as "gemini" | "say" | undefined,
       theme: a.theme,

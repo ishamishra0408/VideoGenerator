@@ -35,7 +35,8 @@ export function itemTimes(scene: Scene, lines: [number, number][], end: number):
       times[k] = at(li, pos - li);
     });
   }
-  const first = lines[0][0] + 0.2, last = Math.max(first, end - 1.0);
+  // a screenshot is seen whole for a moment before the camera moves onto the first thing it points at
+  const first = lines[0][0] + (scene.kind === "screen" && scene.items.some((i) => i.box) ? 1.3 : 0.2), last = Math.max(first, end - 1.0);
   return times.map((t) => Math.min(Math.max(t, first), last));
 }
 

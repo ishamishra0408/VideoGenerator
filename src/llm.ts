@@ -2,7 +2,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { WRITER_PRICES } from "./config.ts";
 
-export interface Message { role: "user" | "assistant"; content: string }
+/** A piece of a message: text, or a picture (the app's screenshots). */
+export type Block = { type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: "image/jpeg" | "image/png"; data: string } };
+export interface Message { role: "user" | "assistant"; content: string | Block[] }
 /** Tokens the call used, and its price at Anthropic's published rates; `cost` is missing for a model not in WRITER_PRICES. */
 export interface Usage { prompt: number; completion: number; cost?: number }
 
